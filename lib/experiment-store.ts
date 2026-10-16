@@ -80,3 +80,14 @@ export async function importSession(file: File): Promise<Session> {
   for (const restoration of data.restorations) if (typeof restoration.time !== 'string' || typeof restoration.reason !== 'string' || typeof restoration.declarationId !== 'string' || !['restored','bounded','unavailable'].includes(restoration.tier) || ['before','after','amount','uncertainty'].some(key => restoration[key as 'before'] !== undefined && !numeric(restoration[key as 'before']))) throw new Error('补偿记录格式错误。');
   return { ...data, revision: 0, id: crypto.randomUUID(), created: new Date().toISOString(), profile: { ...data.profile, name: `${data.profile.name}（导入）` } };
 }
+
+export async function getSession(id: string): Promise<Session | null> {
+  const db = await open();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction('sessions').objectStore('sessions').get(id);
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}

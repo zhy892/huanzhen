@@ -4,6 +4,7 @@ export type Observation = {
 };
 export type Reading = { order: number; diameter: number };
 export type Profile = {
+  kind?: "experiment" | "simulation";
   name: string; instrument: string; wavelengthNm: number; resolutionMm: number;
   pixelPerMm: number | null; conditions: string; diameterFactor: number;
   factorUncertainty: number;
@@ -19,9 +20,9 @@ export type Residual = {
   message: string; deviation?: number; uncertainty?: number; repeatability?: number;
   adjustmentResolution?: number; historyCount: number;
 };
-export type Declaration = { ruleVersion?: string; id: string; time: string; roundIds: string[]; result: Residual };
+export type Declaration = { measurementRevision?: number; ruleVersion?: string; id: string; time: string; roundIds: string[]; result: Residual };
 export type Restoration = { time: string; declarationId: string; tier: 'restored' | 'bounded' | 'unavailable'; reason: string; before?: number; after?: number; amount?: number; uncertainty?: number };
-export type Session = { revision?: number; version: 1; id: string; created: string; profile: Profile; rounds: Round[]; declarations: Declaration[]; restorations: Restoration[] };
+export type Session = { measurementRevision?: number; revision?: number; version: 1; id: string; created: string; profile: Profile; rounds: Round[]; declarations: Declaration[]; restorations: Restoration[] };
 
 export function mean(values: number[]) { return values.reduce((a, b) => a + b, 0) / values.length; }
 export function deviation(values: number[]) {
@@ -59,6 +60,7 @@ export function recommend(samples: Array<{ metrics: Observation }>): Recommendat
   };
 }
 export function compareRounds(a: Round, b: Round) {
+  if(b.operation === "unrecorded") return {label:"仅比较变化",detail:"本轮未补充具体操作，已保存指标变化；不自动把变化归因于建议操作。"};
   if (a.confounds || b.confounds) return { label: '条件变化，暂不归因', detail: '存在拍摄或设置变化；保留差异，但不将变化归因于单项调整。' };
   if (a.samples.length < 3 || b.samples.length < 3 || [...a.samples, ...b.samples].some(s => s.metrics.damaged)) return { label: '证据不足', detail: '每轮至少需要 3 次有效重复测量。此数量是初始采集要求，并非精度保证。' };
   if (b.operation !== a.recommendation.id) return { label: '操作不匹配', detail: '本轮未验证上一轮推荐的操作，不能判断该假设是否得到支持。' };
@@ -115,7 +117,7 @@ export function calculate(readings: Reading[], profile: Profile) {
 export function restore(session: Session): Restoration {
   const declaration = session.declarations.at(-1);
   const base = { time: new Date().toISOString(), declarationId: declaration?.id ?? '', tier: 'unavailable' as const };
-  if (!declaration || declaration.roundIds.join(',') !== session.rounds.map(r => r.id).join(',')) return { ...base, reason: '缺少对应当前轮次的完成声明，请重新检验。' };
+  if (!declaration || (declaration.measurementRevision??0)!==(session.measurementRevision??0) || declaration.roundIds.join(',') !== session.rounds.map(r => r.id).join(',')) return { ...base, reason: '缺少对应当前轮次的完成声明，请重新检验。' };
   if (declaration.result.status !== 'detected' || inspectResidual(session.rounds).status !== 'detected') return { ...base, reason: '当前检验未满足进入残余补偿评估的条件。' };
   const p = session.profile; const measured = calculate(session.rounds.at(-1)!.readings, p);
   if (!measured || !Number.isFinite(p.diameterFactor) || p.diameterFactor <= 0 || p.diameterFactor === 1 || !Number.isFinite(p.factorUncertainty) || p.factorUncertainty <= 0) return { ...base, reason: '没有独立长度标定系数及其标准不确定度，无法给出唯一还原值。轴比残余本身不能确定曲率半径补偿量。' };

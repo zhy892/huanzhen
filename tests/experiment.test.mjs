@@ -90,3 +90,9 @@ test('shared manual ellipse fitting preserves known geometry', async () => {
   assert.ok(Math.abs(fit.centerX - 250) < 1e-4);
   assert.ok(Math.abs(fit.centerY - 240) < 1e-4);
 });
+
+test('edited readings invalidate a previous completion declaration', () => {
+  const r=round('a',[.95,.951,.949]);
+  const session={version:1,id:'s',created:'',measurementRevision:1,profile,rounds:[r],declarations:[{id:'d',time:'',roundIds:['a'],measurementRevision:0,result:inspectResidual([r])}],restorations:[]};
+  assert.match(restore(session).reason,/缺少对应当前轮次/);
+});

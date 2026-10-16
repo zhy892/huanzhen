@@ -73,11 +73,8 @@ test("ships robust real-photo ring fitting", async () => {
   assert.match(page, /连续环边追踪与椭圆拟合/);
 });
 
-test("iteration entry renders without requiring browser storage on the server", async () => {
+test("legacy iteration route returns to the unified workspace", async () => {
   const response = await render("/experiment");
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  assert.match(html, /先调整，再复核/);
-  assert.match(html, /建立档案/);
-  assert.match(html, /当前浏览器/);
+  assert.ok([301,302,303,307,308].includes(response.status));
+  assert.match(response.headers.get("location"), /\/\?tool=records$/);
 });

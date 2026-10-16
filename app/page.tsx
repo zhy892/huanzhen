@@ -1,10 +1,26 @@
 "use client";
 
+import dynamic from "next/dynamic";
+import type { Session, Round, Sample } from "../core/experiment";
+import { recommend, compareRounds, inspectResidual } from "../core/experiment";
+import { saveSession, getSession } from "../lib/experiment-store";
+import ExperimentFlow from "../components/experiment-flow";
+const SimulationPanel = dynamic(() => import("../components/simulation-panel").then(m => m.SimulationPanel), { ssr: false });
 import { ChangeEvent, DragEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { CauseId, Mode, ImageMetrics, AiDiagnosis, FitPoint, ORDERS, STANDARD_RADIUS, CALIBRATION_STRENGTH, MAX_RECOMMENDED_CAUSES, CAUSES, DEMO_DATA, clamp, wait, fmt, builtinDiagnosis, buildAiSuggestions, fitEllipseFromPoints, inspectImage, axisProjectionFactor, calculationT } from "../core/analysis";
 
 export default function Home() {
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+  const [showRecords, setShowRecords] = useState(false);
+  const [showSimulation, setShowSimulation] = useState(false);
+  const [roundAction, setRoundAction] = useState("");
+  const [roundOperation, setRoundOperation] = useState("repeat");
+  const [roundConfounds, setRoundConfounds] = useState("");
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [recordNotice, setRecordNotice] = useState("");
+  function receiveSession(s: Session) { sessionRef.current = s; setActiveSession(s); try {sessionStorage.setItem("huanzhen-active-session",s.id);} catch { /* The saved IndexedDB record remains available from history. */ } }
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const [mode, setMode] = useState<Mode>("empirical");
   const [file, setFile] = useState<File | null>(null);
@@ -26,6 +42,35 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [reportReady, setReportReady] = useState(false);
   const [retestMode, setRetestMode] = useState(false);
+  useEffect(() => {
+    let cancelled=false;
+    const tool = new URLSearchParams(window.location.search).get("tool");
+    let id:string|null=null;
+    try { id=sessionStorage.getItem("huanzhen-active-session"); } catch { /* Resume is optional when session storage is unavailable. */ }
+    const load=id ? getSession(id) : Promise.resolve(null);
+    void load.then(saved=>{
+      if(cancelled) return;
+      if(saved) receiveSession(saved);
+      if(tool==="records") setShowRecords(true);
+      if(tool==="simulation") setShowSimulation(true);
+    }).catch(()=>{ if(!cancelled) setRecordNotice("当前浏览器无法恢复实验记录，请检查存储权限。"); });
+    return ()=>{cancelled=true;};
+  }, []);
+  useEffect(() => {
+    if (!showRecords && !showSimulation) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const overlay = document.querySelector<HTMLElement>(".flow-overlay");
+    const controls = () => Array.from(overlay?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]') ?? []).filter(e => e.getClientRects().length > 0);
+    controls()[0]?.focus();
+    const keyboard = (e: KeyboardEvent) => {
+      if(e.key === "Escape") { setShowRecords(false); setShowSimulation(false); }
+      if(e.key === "Tab") { const all=controls(); const first=all[0],last=all.at(-1); if(e.shiftKey && document.activeElement===first) {e.preventDefault();last?.focus();} else if(!e.shiftKey && document.activeElement===last) {e.preventDefault();first?.focus();} }
+    };
+    document.addEventListener("keydown",keyboard);
+    return () => {document.body.style.overflow=oldOverflow; document.removeEventListener("keydown",keyboard);previous?.focus();};
+  }, [showRecords, showSimulation]);
   const fileInput = useRef<HTMLInputElement>(null);
   const previewCanvas = useRef<HTMLCanvasElement>(null);
 
@@ -268,6 +313,7 @@ export default function Home() {
   }, [results.radius, results.radiusUncertainty, results.rSquared, correction.total]);
 
   function updateFile(nextFile: File) {
+    setBatchFiles([]);
     if (!nextFile.type.startsWith("image/")) {
       setError("请上传 JPG、PNG 或其他常见图片格式。");
       return;
@@ -298,8 +344,9 @@ export default function Home() {
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDragging(false);
-    const dropped = event.dataTransfer.files[0];
-    if (dropped) updateFile(dropped);
+    const files=Array.from(event.dataTransfer.files);
+    if(files.length>8) {setError("每轮最多选择8张照片。");return;}
+    if (files[0]) {updateFile(files[0]);setBatchFiles(files);}
   }
 
   async function analyze() {
@@ -311,6 +358,7 @@ export default function Home() {
       setError("精准拟合至少需要沿同一条清晰圆环点击 5 个点；建议均匀点击 6–10 个点。");
       return;
     }
+    if (batchFiles.some(f=>!f.type.startsWith("image/") || f.size>12*1024*1024)) {setError("请上传每张不超过12 MB的图片。");return;}
     setError("");
     setThinking("analysis");
     try {
@@ -328,6 +376,30 @@ export default function Home() {
       } else {
         await wait(900);
       }
+      try {
+        const samples: Sample[] = [];
+        const sources = batchFiles.length ? batchFiles : [file];
+        for (let i=0; i<sources.length; i++) {
+          const source=sources[i];
+          const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await source.arrayBuffer()))).map(v=>v.toString(16).padStart(2,"0")).join("");
+          const result=i===0 ? measured : await inspectImage(source, [], false);
+          const { annotatedImage, ...observation }=result; void annotatedImage;
+          samples.push({ id:hash, image:source, name:source.name, metrics:observation });
+        }
+        const simulation=sources.every(f=>f.name.startsWith("simulation-"));
+        if(!simulation && sources.some(f=>f.name.startsWith("simulation-"))) throw new Error("请将仿真图片与实际实验照片分开分析。");
+        const current=sessionRef.current;
+        const existing=current && (current.profile.kind ?? "experiment")===(simulation ? "simulation" : "experiment") ? current : null;
+        const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.id)) ?? []);
+        if(new Set(samples.map(s=>s.id)).size!==samples.length || samples.some(s=>known.has(s.id))) {
+          setRecordNotice("本次含重复照片，分析结果可查看，但未作为新的独立测量保存。重新拍摄后再复测。");
+        } else {
+          const base:Session=existing ?? { version:1, id:crypto.randomUUID(), created:new Date().toISOString(), profile:{ kind:simulation ? "simulation" : "experiment", name:`${simulation ? "仿真演示" : "牛顿环实验"} ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
+          const round:Round={ id:crypto.randomUUID(),time:new Date().toISOString(),algorithmVersion:"ring-v1",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "按上一轮建议调整后复测（未补充操作细节）" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+          receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
+          setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。`);
+        }
+      } catch(e) { setRecordNotice(`分析已完成，记录未保存：${e instanceof Error ? e.message : "请检查浏览器存储"}`); }
       setMetrics(measured);
       setDiagnosis(nextDiagnosis);
       setSelectedCauses(buildAiSuggestions(measured, nextDiagnosis).filter((item) => item.recommended).map((item) => item.id));
@@ -353,6 +425,15 @@ export default function Home() {
     });
   }
 
+  async function finishAdjusting() {
+    const session=sessionRef.current;
+    if(!session) {setShowRecords(true);return;}
+    try {
+      receiveSession(await saveSession({...session,declarations:[...session.declarations,{id:crypto.randomUUID(),time:new Date().toISOString(),roundIds:session.rounds.map(r=>r.id),measurementRevision:session.measurementRevision??0,result:inspectResidual(session.rounds)}]}));
+      setShowRecords(true);
+    } catch(e) {setError(e instanceof Error ? e.message : "检验未保存");}
+  }
+
   async function goToData() {
     if (selectedCauses.includes("damage")) return;
     setThinking("restore");
@@ -373,6 +454,10 @@ export default function Home() {
     setFitPoints([]);
     setError("");
     setReportReady(false);
+    setBatchFiles([]);
+    setValues(Object.fromEntries(ORDERS.map(o=>[o, ""])));
+    setRoundAction(""); setRoundConfounds("");
+    setRoundOperation(sessionRef.current?.rounds.at(-1)?.recommendation.id ?? "repeat");
     setRetestMode(true);
     setStep(1);
   }
@@ -388,6 +473,14 @@ export default function Home() {
       return;
     }
     setError("");
+    const session=sessionRef.current;
+    if(session?.rounds.length) {
+      try {
+        const rounds=[...session.rounds];
+        rounds[rounds.length-1]={...rounds.at(-1)!,readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])}))};
+        receiveSession(await saveSession({...session,measurementRevision:(session.measurementRevision??0)+1, profile:{...session.profile,wavelengthNm:Number(wavelength)},rounds}));
+      } catch(e) {setError(e instanceof Error ? e.message : "读数保存失败");return;}
+    }
     setThinking("restore");
     await wait(900);
     setThinking(null);
@@ -396,6 +489,7 @@ export default function Home() {
   }
 
   function reset() {
+    sessionRef.current=null; setActiveSession(null); setBatchFiles([]); setRecordNotice(""); try {sessionStorage.removeItem("huanzhen-active-session");} catch { /* No stored pointer to clear. */ }
     if (preview) URL.revokeObjectURL(preview);
     setStep(0);
     setMode("empirical");
@@ -478,12 +572,14 @@ export default function Home() {
   if (step === 0) {
     return (
       <main className="landing">
+{showRecords && <ExperimentFlow session={activeSession} onChange={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));}} onResume={s=>{receiveSession(s);setShowRecords(false);setWavelength(String(s.profile.wavelengthNm));startRetest();}} onClose={()=>setShowRecords(false)}/>}
+      {showSimulation && <div className="flow-overlay" role="dialog" aria-modal="true" aria-label="环纹仿真"><div className="flow-dialog"><button className="quiet-button" type="button" onClick={()=>setShowSimulation(false)}>返回实验 ×</button><SimulationPanel onUse={f=>{updateFile(f);setBatchFiles([f]);setStep(1);setShowSimulation(false);}}/></div></div>}
         <header className="landing-nav">
-          <button className="brand" type="button" onClick={reset} aria-label="环真首页">
+          <button className="brand" type="button" onClick={()=>setStep(0)} aria-label="环真首页">
             <span className="brand-mark"><i /><i /><i /></span>
             <span>环真</span>
           </button>
-          <span className="open-badge"><span>●</span> 公开访问 · 无需登录</span>
+          <div className="flow-tools"><button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>实验记录</button><button className="quiet-button" type="button" onClick={()=>setShowSimulation(true)}>仿真试一试</button></div>
         </header>
 
         <section className="hero">
@@ -495,10 +591,10 @@ export default function Home() {
             <div className="experiment-strip" aria-label="牛顿环实验支持内容">
               <span><b>01</b> 环纹圆度</span><span><b>02</b> 复合误差</span><span><b>03</b> 曲率半径 R</span>
             </div>
-            <button className="primary hero-cta" type="button" onClick={() => setStep(1)}>
-              开始分析 <span>↗</span>
+            <button className="primary hero-cta" type="button" onClick={() => activeSession ? startRetest() : setStep(1)}>
+              {activeSession ? "继续本次实验" : "开始分析"} <span>↗</span>
             </button>
-            <p><a className="primary hero-cta" href="/experiment">进入迭代实验 →</a></p>
+            <p className="privacy-line">首次分析后，按建议调整并复测；系统自动保留整个过程。</p>
             <p className="privacy-line"><span>✓</span> 经验模式全程在浏览器内处理图片</p>
           </div>
 
@@ -535,8 +631,10 @@ export default function Home() {
 
   return (
     <main className="app-shell">
+{showRecords && <ExperimentFlow session={activeSession} onChange={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));}} onResume={s=>{receiveSession(s);setShowRecords(false);setWavelength(String(s.profile.wavelengthNm));startRetest();}} onClose={()=>setShowRecords(false)}/>}
+      {showSimulation && <div className="flow-overlay" role="dialog" aria-modal="true" aria-label="环纹仿真"><div className="flow-dialog"><button className="quiet-button" type="button" onClick={()=>setShowSimulation(false)}>返回实验 ×</button><SimulationPanel onUse={f=>{updateFile(f);setBatchFiles([f]);setStep(1);setShowSimulation(false);}}/></div></div>}
       <header className="app-header">
-        <button className="brand" type="button" onClick={reset} aria-label="返回首页">
+        <button className="brand" type="button" onClick={()=>setStep(0)} aria-label="返回首页">
           <span className="brand-mark"><i /><i /><i /></span><span>环真</span>
         </button>
         {step < 3 && (
@@ -546,7 +644,7 @@ export default function Home() {
             <span className={step >= 3 ? "active" : ""}><b>3</b> 数据</span>
           </div>
         )}
-        <button className="quiet-button" type="button" onClick={reset}>回到首页</button>
+        <div className="flow-tools"><button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>本次实验{activeSession ? ` · ${activeSession.rounds.length}轮` : "记录"}</button><button className="quiet-button" type="button" onClick={()=>setShowSimulation(true)}>仿真</button><button className="quiet-button" type="button" onClick={reset}>新实验</button></div>
       </header>
 
       {step === 1 && (
@@ -556,8 +654,9 @@ export default function Home() {
             <div><p>图像输入</p><h2>上传第一级圆环</h2><span>尽量裁剪到只保留完整圆环，画面越正、边缘越清晰，判断越稳定。</span></div>
           </div>
 
+          {retestMode && <details className="flow-adjustment"><summary>补充本轮调整（可选，未填写也会自动记录）</summary><label>操作类型<select value={roundOperation} onChange={e=>setRoundOperation(e.target.value)}><option value="view">观察方向</option><option value="focus">对焦与照明</option><option value="center">取景与读数轴</option><option value="repeat">同设置重复测量</option><option value="other">其他操作</option></select></label><label>实际调整<input value={roundAction} onChange={e=>setRoundAction(e.target.value)}/></label><label>拍摄或光照变化<input value={roundConfounds} onChange={e=>setRoundConfounds(e.target.value)}/></label></details>}
           {retestMode && (
-            <div className="retest-banner"><span>↻</span><div><b>仪器调整后的复测</b><p>请按上一页的 AI 辅助建议完成装调，再上传一张新的第一级环照片重新诊断。建议保持拍摄距离和方向一致，便于观察改进效果。</p></div></div>
+            <div className="retest-banner"><span>↻</span><div><b>仪器调整后的复测</b><p>按上一轮建议调整后直接上传新照片，无需重建实验。可以选择多张同设置照片，用于检查重复性。</p></div></div>
           )}
 
           <div className="upload-layout">
@@ -572,7 +671,7 @@ export default function Home() {
               onClick={() => !preview && fileInput.current?.click()}
               onKeyDown={(event) => { if (!preview && (event.key === "Enter" || event.key === " ")) fileInput.current?.click(); }}
             >
-              <input ref={fileInput} type="file" accept="image/*" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && updateFile(event.target.files[0])} />
+              <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(event: ChangeEvent<HTMLInputElement>) => {const files=Array.from(event.target.files ?? []); if(files.length>8) {setError("每轮最多选择8张照片。");return;} if(files[0]) {updateFile(files[0]);setBatchFiles(files);}}} />
               {preview ? (
                 <>
                   <canvas ref={previewCanvas} className={manualFit ? "pointing" : ""} onClick={addFitPoint} role="img" aria-label="待分析的牛顿环；精准拟合开启时可点击圆环取点" />
@@ -592,6 +691,7 @@ export default function Home() {
             </div>
 
             <aside className="analysis-options">
+              <p className="field-label">已选 {batchFiles.length || (file ? 1 : 0)} 张 · 同设置可选择多张，分别保存用于重复性检验</p>
               <p className="field-label">选择分析方式</p>
               <button className={`mode-card ${mode === "empirical" ? "selected" : ""}`} type="button" onClick={() => { setMode("empirical"); setError(""); }}>
                 <span className="mode-symbol">ƒ</span>
@@ -641,6 +741,7 @@ export default function Home() {
             </div>
           </div>
 
+          {recordNotice && <p className="flow-save-note" role="status">{recordNotice}{activeSession && activeSession.rounds.length>1 && <span> 本轮对比：{compareRounds(activeSession.rounds.at(-2)!,activeSession.rounds.at(-1)!).label}。</span>} <button type="button" onClick={()=>setShowRecords(true)}>查看记录与残余检验</button></p>}
           <div className="cause-section ai-advice-section">
             <div className="cause-heading ai-advice-heading">
               <div>
@@ -712,7 +813,7 @@ export default function Home() {
           ) : (
             <div className="action-bar">
               <div className="correction-summary"><span>当前综合修正系数</span><b>× {correction.total.toFixed(5)}</b><small>{selectedCauses.length ? `${selectedCauses.length} 项建议经现场复核后启用` : "正圆 / 不启用额外修正"}</small></div>
-              <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="primary" type="button" onClick={goToData}>继续还原实验数据 <span>→</span></button></div>
+              <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="secondary" type="button" onClick={finishAdjusting}>我已调整完毕，检验残余</button><button className="primary" type="button" onClick={goToData}>录入读数与报告 <span>→</span></button></div>
             </div>
           )}
         </section>
@@ -826,7 +927,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="restart-bar"><div><b>还要分析另一组实验吗？</b><span>本页不保存照片、密钥或实验数据。</span></div><button className="primary" type="button" onClick={reset}>回到首页，再次使用 ↻</button></div>
+          <div className="restart-bar"><div><b>还要分析另一组实验吗？</b><span>实验记录保存在当前浏览器，可查看历史或开始新实验。</span></div><button className="primary" type="button" onClick={reset}>回到首页，再次使用 ↻</button></div>
         </section>
       )}
 

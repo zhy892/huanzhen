@@ -610,3 +610,19 @@ tr th:last-child, tr td:last-child { border-right: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+.flow-tools { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.flow-overlay { position:fixed; inset:0; z-index:100; background:rgba(13,38,29,.42); overflow:auto; padding:30px 16px; }
+.flow-dialog { position:relative; width:min(1040px,100%); margin:auto; padding:28px; background:var(--paper); border-radius:22px; box-shadow:0 20px 80px #0003; }
+.flow-dialog.experiment-page { max-width:1040px; }
+.flow-dialog-header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.flow-dialog-header h2 { margin:0; }
+.flow-adjustment, .flow-save-note { margin:16px 0; padding:16px 20px; background:var(--green-soft); border:1px solid var(--line); border-radius:14px; }
+.flow-adjustment label { display:block; margin:10px 0; }
+.flow-adjustment input,.flow-adjustment select { margin-left:12px; padding:8px; border:1px solid var(--line); border-radius:8px; }
+.flow-save-note button { margin-left:10px; color:var(--green-dark); text-decoration:underline; }
+@media(max-width:650px) { .flow-dialog { padding:16px; }.app-header {flex-wrap:wrap;}.flow-tools {gap:5px;}.flow-overlay {padding:8px;}.flow-adjustment input {width:100%;margin-left:0;} }
+@media print { body:has(.flow-overlay) .app-shell > :not(.flow-overlay), body:has(.flow-overlay) .landing > :not(.flow-overlay) {display:none!important;}.flow-overlay {position:static;padding:0;background:white;}.flow-dialog {box-shadow:none;width:100%;padding:0;}.flow-dialog-header button,.flow-tools {display:none!important;} }
+@media(max-width:650px) { .app-header {height:auto;min-height:76px;padding-top:10px;padding-bottom:10px;gap:10px;}.app-header .stepper {order:3;width:100%;justify-content:center;} }
+.diagnosis-actions .secondary:not(.retest-action) { color:var(--ink); background:#fff; }
+@media(max-width:650px) { .app-header .stepper {position:static;left:auto;transform:none;flex-basis:100%;}.app-header .flow-tools {margin-left:auto;} }
