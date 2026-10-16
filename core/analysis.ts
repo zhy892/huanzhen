@@ -1,5 +1,7 @@
-import { bilinear, darkCandidates, traceDarkRing } from "./ring-tracking.ts";
+import { angularSupport, bilinear, darkCandidates, traceDarkRing } from "./ring-tracking.ts";
 import { fitRobustEllipse, initializeEllipse } from "./ellipse.ts";
+import { assessFit } from "./fit-quality.ts";
+import type { FitStatus } from "./fit-quality.ts";
 import type { Ellipse } from "./ellipse.ts";
 export type CauseId = "tilt" | "pressure" | "decenter" | "calibration" | "damage";
 export type Mode = "empirical" | "deepseek";
@@ -22,6 +24,9 @@ export type ImageMetrics = {
   fitResidualPx?: number;
   fitCoverage?: number;
   fitInlierFraction?: number;
+  fitObservedFraction?: number;
+  fitStatus?: FitStatus;
+  fitWarnings?: string[];
   contourKind?: "dark-centerline" | "manual-points";
 };
 
@@ -123,9 +128,9 @@ export function fmt(value: number, digits = 3) {
 export function builtinDiagnosis(metrics: ImageMetrics): AiDiagnosis {
   if (metrics.damaged) {
     return {
-      verdict: "无法可靠还原",
-      summary: "轮廓完整度或清晰度未通过质量门槛，疑似存在明显成像/仪器异常。建议先检查光源、物镜、读数显微镜与接触面。",
-      causes: ["damage"],
+      verdict: metrics.fitStatus === "review" ? "拟合待复核" : "轮廓证据不足",
+      summary: metrics.fitStatus === "review" ? "已显示可辨认弧段支持的候选椭圆。缺失、遮挡或较大的轮廓偏差会影响形状判断，请先核对目标环；本轮暂不作仪器误差归因或自动补偿。" : "当前图像不足以支持可靠的轮廓判断。请检查取景、对焦与目标环选择；这不等同于仪器损坏。",
+      causes: [],
       confidence: metrics.confidence,
     };
   }
@@ -172,7 +177,7 @@ export function buildAiSuggestions(metrics: ImageMetrics, diagnosis: AiDiagnosis
     .sort((a, b) => b.probability - a.probability);
   const recommendedIds = new Set<CauseId>(
     metrics.damaged
-      ? ["damage"]
+      ? []
       : ranked
         .filter((item) => item.id !== "damage" && diagnosis.causes.includes(item.id))
         .slice(0, MAX_RECOMMENDED_CAUSES)
@@ -211,7 +216,7 @@ function longestRun(input: boolean[]) {
   return [bestStart, bestEnd] as const;
 }
 
-function boxBlur(source: Float32Array, width: number, height: number, radius: number) {
+export function boxBlur(source: Float32Array, width: number, height: number, radius: number) {
   if (radius <= 0) return source;
   const horizontal = new Float32Array(source.length);
   const result = new Float32Array(source.length);
@@ -287,7 +292,7 @@ function traceContinuousRing(gray: Float32Array, width: number, height: number, 
   return traceDarkRing(gray,width,height,roi,center,gradientScale,target,prediction,guide);
 }
 
-function detectGuideLine(
+export function detectGuideLine(
   gray: Float32Array,
   width: number,
   height: number,
@@ -316,7 +321,7 @@ function detectGuideLine(
         const y = axis === "vertical" ? along : coordinate + offset;
         if (x >= roi.x0 && x <= roi.x1 && y >= roi.y0 && y <= roi.y1) neighborValues.push(gray[y * width + x]);
       }
-      if (neighborValues.length) contrasts.push(median(neighborValues) - median(lineValues));
+      if (neighborValues.length) contrasts.push(median(neighborValues) - Math.min(...lineValues));
     }
     const score = median(contrasts) + median(contrasts.filter((value) => value > 0)) * 0.45;
     if (score > bestScore) {
@@ -344,12 +349,13 @@ function refineSourceRing(image: HTMLImageElement, fit: EllipseFit, width: numbe
   const predicted=initializeEllipse(outline);if(!predicted)return null;
   const pixels=context.getImageData(0,0,canvas.width,canvas.height).data,gray=new Float32Array(canvas.width*canvas.height);
   for(let i=0;i<gray.length;i++)gray[i]=pixels[4*i]*.299+pixels[4*i+1]*.587+pixels[4*i+2]*.114;
+  const fineGray=boxBlur(gray,canvas.width,canvas.height,Math.max(1,Math.round(sx*gx)));
   const points:RingCandidate[]=[];
   for(let i=0;i<240;i++) {
     const theta=i/240*2*Math.PI,phi=theta-predicted.angle*Math.PI/180;
     const radius=1/Math.hypot(Math.cos(phi)/predicted.semiMajor,Math.sin(phi)/predicted.semiMinor);
     const band=Math.max(3,Math.min(10*sx*gx,predicted.semiMinor*.035));
-    const candidates=darkCandidates(gray,canvas.width,canvas.height,{x:predicted.centerX,y:predicted.centerY},theta,Math.max(2,radius-band),radius+band,1.5);
+    const candidates=darkCandidates(fineGray,canvas.width,canvas.height,{x:predicted.centerX,y:predicted.centerY},theta,Math.max(2,radius-band),radius+band,1.5);
     if(!candidates.length)continue;
     const best=candidates.reduce((a,b)=>Math.abs(a.radius-radius)<Math.abs(b.radius-radius)?a:b);
     const px=(best.x/gx+x)/sx,py=(best.y/gy+y)/sy;
@@ -500,16 +506,16 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
     if(!robustAutoFit && !manualResult) throw new Error("轮廓无法通过椭圆一致性检查，请点选目标暗环或重新取点。");
     const result=manualResult ?? {fit:robustAutoFit!.fit,rms:robustAutoFit!.rms,coverage:robustAutoFit!.coverage,inliers:robustAutoFit!.inliers};
     const {centerX,centerY,semiMajor,semiMinor,ratio,angle}=result.fit;
-    const fitResidual=result.rms/semiMinor;
     const fitMethod: "auto" | "manual" = manualResult?"manual":"auto";
     const quadrants=[0,0,0,0];
     for(const point of tracked)quadrants[(point.x>=centerX?1:0)+(point.y>=centerY?2:0)]+=point.magnitude;
     const meanMagnitude=tracked.reduce((sum,p)=>sum+p.magnitude,0)/tracked.length;
-    const contrastScore=clamp((meanMagnitude-q65)/Math.max(1,q92-q65),0,1);
+    const contrastScore=clamp(meanMagnitude/Math.max(16,q92*1.5),0,1);
     const edgeCoverage=tracked.filter(p=>p.magnitude>=q76).length/tracked.length;
     const fitInlierFraction=result.inliers.length/tracked.length;
-    const residualScore=Math.exp(-((result.rms/Math.max(.8,Math.min(width,height)*.0015))**2));
-    const fitQuality=clamp((residualScore*.5+result.coverage*.2+fitInlierFraction*.15+contrastScore*.15)*Math.min(1,contrastScore/.2),0,1);
+    const fitObservedFraction=manualResult?result.coverage:angularSupport(result.inliers.map(i=>tracked![i]),result.fit);
+    const assessment=assessFit({rms:result.rms,semiMinor,minDimension:Math.min(width,height),coverage:result.coverage,observedFraction:fitObservedFraction,inlierFraction:fitInlierFraction,contrast:contrastScore});
+    const fitQuality=assessment.quality;
     const fitResidualPx=result.rms,fitCoverage=result.coverage;
     const quadrantTotal = quadrants.reduce((sum, value) => sum + value, 0) || 1;
     const normalizedQuadrants = quadrants.map((value) => value / quadrantTotal);
@@ -520,15 +526,17 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
       1,
     );
     const clarity = clamp(contrastScore * 0.7 + edgeCoverage * 0.3, 0, 1);
-    const damaged = fitQuality < 0.48 || fitResidual > 0.08 || fitCoverage < 0.6 || contrastScore<.08 || (fitMethod === "auto" && edgeCoverage < 0.28);
+    // Legacy `damaged` means unsuitable for quantitative use, not physical damage.
+    const damaged = assessment.status !== "accepted";
+    const showEllipse = assessment.status !== "unreliable";
     const confidence = clamp(fitQuality, 0, 0.98);
 
     context.save();
     const accepted=new Set(result.inliers);
     tracked.forEach((point,i)=>{context.fillStyle=accepted.has(i)?"rgba(72,202,142,.85)":"rgba(255,105,92,.9)";context.beginPath();context.arc(point.x,point.y,Math.max(1.1,width/700),0,Math.PI*2);context.fill();});
     context.lineWidth = Math.max(2, width / 420);
-    if (!damaged) {
-      context.strokeStyle = "rgba(201, 239, 99, 0.98)";
+    if (showEllipse) {
+      context.strokeStyle = damaged ? "rgba(255, 190, 77, 0.98)" : "rgba(201, 239, 99, 0.98)";
       context.fillStyle = "rgba(201, 239, 99, 0.98)";
       context.setLineDash([Math.max(5, width / 90), Math.max(4, width / 130)]);
       context.beginPath();
@@ -553,7 +561,7 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
     context.restore();
     const annotatedImage = annotate ? canvas.toDataURL("image/jpeg", 0.9) : "";
 
-    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, ellipse:damaged?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:manualResult?"manual-points":"dark-centerline" };
+    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, fitStatus:assessment.status,fitWarnings:assessment.warnings,fitObservedFraction,ellipse:!showEllipse?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:manualResult?"manual-points":"dark-centerline" };
   } finally {
     URL.revokeObjectURL(url);
   }

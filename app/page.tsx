@@ -117,7 +117,7 @@ export default function Home() {
   }, [preview, fitPoints, targetPoint]);
 
   const correction = useMemo(() => {
-    if (!metrics) return { total: 1, parts: [] as Array<{ name: string; factor: number; formula: string }> };
+    if (!metrics || metrics.damaged) return { total: 1, parts: [] as Array<{ name: string; factor: number; formula: string }> };
     const parts: Array<{ name: string; factor: number; formula: string }> = [];
     const ellipseCount = Number(selectedCauses.includes("tilt")) + Number(selectedCauses.includes("pressure"));
     const sharedRatio = ellipseCount > 1 ? metrics.ratio ** (1 / ellipseCount) : metrics.ratio;
@@ -163,16 +163,16 @@ export default function Home() {
       calibration: `${orientation}且长短轴比例存在差异，应使用标准长度复核横、纵标尺比例。`,
       damage: `连续环边拟合质量仅 ${Math.round(metrics.fitQuality * 100)}%，轮廓不足以满足经验还原的闭合与可辨认前提。`,
     };
-    const evidence = diagnosis.causes.length
+    const evidence = metrics.damaged ? [{label:"轮廓复核",text:"当前形状参数仅供核对目标环，暂不据此推断仪器误差。"}] : diagnosis.causes.length
       ? diagnosis.causes.map((cause) => ({ label: CAUSES.find((item) => item.id === cause)?.short || cause, text: causeEvidence[cause] }))
       : [{ label: "未见系统偏差", text: "长短轴差异处于正圆阈值内，当前照片未给出需要强制修正的量化证据。" }];
     const restorationTitle = metrics.damaged
-      ? "停止还原，优先重新成像"
+      ? "先确认候选轮廓"
       : metrics.ratio >= 0.975
         ? "可保留原始水平直径"
         : "可在现场复核后组合还原";
     const restorationText = metrics.damaged
-      ? "请清洁光学表面、检查接触状态和读数显微镜，再拍摄一张完整闭合、对焦清晰的环纹照片。"
+      ? "先确认虚线是否沿同一条暗环；可点选目标环或手动取点复核。若环纹被裁切或遮挡，建议补拍，本轮仍保留在实验记录中。"
       : selectedCauses.length
         ? `当前选择 ${selectedCauses.length} 项原因，预估综合直径修正系数为 × ${correction.total.toFixed(5)}；进入数据页前仍应与实际装调现象核对。`
         : "当前无需启用额外几何修正；仍建议保留原始读数和照片，便于实验报告复核。";
@@ -368,7 +368,7 @@ export default function Home() {
     try {
       const measured = await inspectImage(chosenFile, !automatic && manualFit ? fitPoints : [], true, !automatic ? targetPoint ?? undefined : undefined);
       let nextDiagnosis = builtinDiagnosis(measured);
-      if (mode === "deepseek") {
+      if (mode === "deepseek" && !measured.damaged) {
         const response = await fetch("/api/deepseek", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -395,7 +395,7 @@ export default function Home() {
         const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
         for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
           const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:"experiment", name:`牛顿环实验 ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
-          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v2",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v3",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
           const duplicates=samples.filter(s=>s.reused).length;
           setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。${duplicates ? `其中 ${duplicates} 张与已有照片重复，已保留曲线记录，但不计为新的独立测量。` : ""}`);
@@ -716,26 +716,28 @@ export default function Home() {
             <div className="image-panel">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={metrics.annotatedImage} alt="已标注拟合椭圆的牛顿环" />
-              <span className="image-caption">{metrics.damaged ? "质量门控：未输出拟合椭圆" : metrics.fitMethod === "manual" ? "精准取点拟合" : metrics.detectedScreen ? "屏幕内抗干扰迭代拟合" : "抗干扰迭代拟合"} · 质量 {Math.round(metrics.fitQuality * 100)}%</span>
+              <span className="image-caption">{metrics.fitStatus === "review" ? "候选椭圆 · 待复核" : metrics.damaged ? "轮廓证据不足" : metrics.fitMethod === "manual" ? "精准取点拟合" : metrics.detectedScreen ? "屏幕内抗干扰迭代拟合" : "抗干扰迭代拟合"} · 质量 {Math.round(metrics.fitQuality * 100)}%</span>
               <button className="refit-button" type="button" onClick={() => { setStep(1); setManualFit(true); setFitPoints([]); }}>拟合不准？返回重新取点</button>
             </div>
             <div className="verdict-panel">
               <p className="eyebrow">ANALYSIS COMPLETE</p>
               <span className={`verdict-pill ${diagnosis.causes.includes("damage") ? "danger" : metrics.ratio >= 0.975 ? "good" : "warn"}`}>{diagnosis.verdict}</span>
-              <h2>{diagnosis.causes.includes("damage") ? "当前图像不适合数据还原" : metrics.ratio >= 0.975 ? "圆度在可接受范围内" : "检测到可校正的椭圆偏差"}</h2>
+              <h2>{metrics.damaged ? "先复核轮廓，再判断实验误差" : metrics.ratio >= 0.975 ? "圆度在可接受范围内" : "检测到可校正的椭圆偏差"}</h2>
               <p>{diagnosis.summary}</p>
+              {metrics.fitWarnings?.map(warning=><p className="mode-note" key={warning}>{warning}</p>)}
               <div className="metric-strip">
                 <div><span>长短轴比</span><b>{metrics.ratio.toFixed(3)}</b></div>
                 <div><span>拟合质量</span><b>{Math.round(metrics.fitQuality * 100)}%</b></div>
                 <div><span>轮廓支持度</span><b>{Math.round(diagnosis.confidence * 100)}%</b></div>
                 {metrics.fitResidualPx !== undefined && <div><span>拟合残差（分析图像素）</span><b>{metrics.fitResidualPx.toFixed(2)} px</b></div>}
                 {metrics.fitCoverage !== undefined && <div><span>环周分布覆盖</span><b>{Math.round(metrics.fitCoverage*100)}%</b></div>}
+                {metrics.fitObservedFraction !== undefined && <div><span>有效弧段覆盖</span><b>{Math.round(metrics.fitObservedFraction*100)}%</b></div>}
               </div>
-              <small className="mode-note">{mode === "deepseek" ? diagnosis.provider === "deepseek" ? "DeepSeek V4 Flash 已基于量化特征完成复核" : "增强服务未配置或不可用，已采用本地诊断" : "经验模型已完成本地分析"}</small>
+              <small className="mode-note">{metrics.damaged ? "本轮先复核轮廓，暂不进行原因推断" : mode === "deepseek" ? diagnosis.provider === "deepseek" ? "DeepSeek V4 Flash 已基于量化特征完成复核" : "增强服务未配置或不可用，已采用本地诊断" : "经验模型已完成本地分析"}</small>
             </div>
           </div>
 
-          <div className="cause-section ai-advice-section">
+          {!metrics.damaged && <div className="cause-section ai-advice-section">
             <div className="cause-heading ai-advice-heading">
               <div>
                 <p><span>调</span> INSTRUMENT ADJUSTMENT</p>
@@ -763,7 +765,7 @@ export default function Home() {
               ))}
             </div>
             <p className="probability-note">五项百分比已归一化且总和严格为 100%，表示本张照片中各原因的相对权重；AI 只优先推荐得分最高且有诊断证据的最多 3 项。该分布不等同于统计学故障概率，也不替代教师判断或仪器检修。</p>
-          </div>
+          </div>}
 
           {diagnosticDetail && (
             <div className="analysis-section compact-analysis-section">
@@ -788,7 +790,7 @@ export default function Home() {
                   <span>下一步建议</span>
                   <b>{diagnosticDetail.restorationTitle}</b>
                   <p>{diagnosticDetail.restorationText}</p>
-                  <small>{metrics.fitMethod === "manual" ? "人工取点复核" : "环心迭代与离群点抑制"} · {mode === "deepseek" ? "DeepSeek 特征复核" : "经验公式判断"}</small>
+                  <small>{metrics.fitMethod === "manual" ? "人工取点复核" : "环心迭代与离群点抑制"} · {metrics.damaged ? "待复核轮廓" : mode === "deepseek" ? "DeepSeek 特征复核" : "经验公式判断"}</small>
                 </div>
               </div>
             </div>

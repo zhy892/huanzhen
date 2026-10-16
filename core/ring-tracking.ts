@@ -1,4 +1,9 @@
-import { fitRobustEllipse } from "./ellipse.ts";
+import {
+  fitRobustEllipse,
+  initializeEllipse,
+  ellipseResidual,
+  ellipseCoverage,
+} from "./ellipse.ts";
 import type { Point, Ellipse } from "./ellipse.ts";
 export type RingPoint = Point & {
   radius: number;
@@ -60,43 +65,75 @@ export function darkCandidates(
     profile: number[] = [];
   for (let r = minRadius; r <= maxRadius; r++)
     profile.push(profileSample(gray, w, h, center.x, center.y, c, s, r));
-  const candidates: RingPoint[] = [];
-  for (let i = 2; i < profile.length - 2; i++) {
-    if (!(profile[i] < profile[i - 1] && profile[i] <= profile[i + 1]))
-      continue;
-    const window = Math.max(
-      4,
-      Math.min(16, Math.round((minRadius + i) * 0.05)),
-    );
-    const left = Math.max(...profile.slice(Math.max(0, i - window), i)),
-      right = Math.max(
-        ...profile.slice(i + 1, Math.min(profile.length, i + window + 1)),
-      );
-    const contrast = Math.min(left, right) - profile[i];
-    if (contrast < contrastFloor) continue;
-    const denominator = profile[i - 1] - 2 * profile[i] + profile[i + 1];
-    const offset =
-      denominator > 1e-8
-        ? Math.max(
-            -0.5,
-            Math.min(
-              0.5,
-              (0.5 * (profile[i - 1] - profile[i + 1])) / denominator,
-            ),
-          )
-        : 0;
-    const radius = minRadius + i + offset;
-    candidates.push({
-      x: center.x + c * radius,
-      y: center.y + s * radius,
-      radius,
-      magnitude: 4 * contrast,
-      maxRadius,
-      observed: true,
+  // Remove fine screen texture along the ray at several scales. A broad dark
+  // fringe can have almost no prominence in the old 4–16 px window.
+  const candidates: Array<RingPoint & { scale: number }> = [];
+  const smooth = (input: number[], radius: number) => {
+    const sums = new Float64Array(input.length + 1),
+      counts = new Uint32Array(input.length + 1);
+    for (let i = 0; i < input.length; i++) {
+      sums[i + 1] = sums[i] + (Number.isFinite(input[i]) ? input[i] : 0);
+      counts[i + 1] = counts[i] + (Number.isFinite(input[i]) ? 1 : 0);
+    }
+    return input.map((_, i) => {
+      const left = Math.max(0, i - radius),
+        right = Math.min(input.length, i + radius + 1),
+        count = counts[right] - counts[left];
+      return count ? (sums[right] - sums[left]) / count : NaN;
     });
+  };
+  for (const scale of [0, 2, 5]) {
+    const values = scale ? smooth(smooth(profile, scale), scale) : profile;
+    for (let i = 2; i < values.length - 2; i++) {
+      if (!(values[i] < values[i - 1] && values[i] <= values[i + 1])) continue;
+      const window = Math.max(
+        8,
+        Math.min(80, Math.round((minRadius + i) * 0.3)),
+      );
+      let left = -Infinity,
+        right = -Infinity;
+      for (let j = Math.max(0, i - window); j < i; j++)
+        if (Number.isFinite(values[j])) left = Math.max(left, values[j]);
+      for (let j = i + 1; j < Math.min(values.length, i + window + 1); j++)
+        if (Number.isFinite(values[j])) right = Math.max(right, values[j]);
+      const contrast = Math.min(left, right) - values[i];
+      if (!Number.isFinite(contrast) || contrast < contrastFloor) continue;
+      const denominator = values[i - 1] - 2 * values[i] + values[i + 1];
+      const offset =
+        denominator > 1e-8
+          ? Math.max(
+              -0.5,
+              Math.min(
+                0.5,
+                (0.5 * (values[i - 1] - values[i + 1])) / denominator,
+              ),
+            )
+          : 0;
+      const radius = minRadius + i + offset;
+      candidates.push({
+        x: center.x + c * radius,
+        y: center.y + s * radius,
+        radius,
+        magnitude: 4 * contrast,
+        maxRadius,
+        observed: true,
+        scale,
+      });
+    }
   }
-  return candidates;
+  // Prefer a stable smoothed trough over multiple texture minima in that trough.
+  const merged: RingPoint[] = [];
+  for (const candidate of candidates.sort(
+    (a, b) =>
+      b.magnitude * (1 + b.scale * 0.08) - a.magnitude * (1 + a.scale * 0.08),
+  )) {
+    const separation = Math.max(4, Math.min(14, candidate.radius * 0.045));
+    if (merged.every((p) => Math.abs(p.radius - candidate.radius) > separation))
+      merged.push(candidate);
+  }
+  return merged.sort((a, b) => a.radius - b.radius);
 }
+
 export function traceDarkRing(
   gray: Float32Array,
   w: number,
@@ -179,15 +216,14 @@ export function traceDarkRing(
       const nearby = all.filter(
         (p) => Math.abs(p.radius - expected) < Math.max(4, size * 0.025),
       );
-      if (nearby.length)
-        selected = [
-          ...nearby
-            .sort(
-              (a, b) =>
-                Math.abs(a.radius - expected) - Math.abs(b.radius - expected),
-            )
-            .slice(0, 3),
-        ];
+      selected = [
+        ...nearby
+          .sort(
+            (a, b) =>
+              Math.abs(a.radius - expected) - Math.abs(b.radius - expected),
+          )
+          .slice(0, 3),
+      ];
     }
     if (target && i === 0 && all.length) {
       const radius = Math.hypot(target.x - center.x, target.y - center.y);
@@ -201,7 +237,18 @@ export function traceDarkRing(
     rays.push(selected.sort((a, b) => a.radius - b.radius));
   }
   const missing = rays.filter((ray) => !ray.length).length;
-  if (missing > count * 0.22) return null;
+  const partial = () =>
+    tracePartialRing(
+      rays,
+      w,
+      h,
+      roi,
+      center,
+      gradientScale,
+      target,
+      prediction,
+    );
+  if (missing > count * 0.22) return partial();
   // Missing directions carry no image evidence. Interpolated candidates only
   // bridge the path; they are never passed to the geometric fit as observations.
   const observed = rays.map((ray) => [...ray]);
@@ -283,12 +330,17 @@ export function traceDarkRing(
       if (
         !result ||
         result.fit.ratio < 0.15 ||
+        (target &&
+          (Math.abs(ellipseResidual(target, result.fit)) >
+            Math.max(7, size * 0.025) ||
+            Math.abs(ellipseResidual(rays[0][0], result.fit)) >
+              Math.max(2, Math.min(w, h) * 0.004))) ||
         result.coverage < 0.65 ||
-        result.inliers.length < evidence.length * 0.8
+        result.inliers.length < evidence.length * 0.72
       )
         continue;
       const residual = result.rms;
-      if (residual > Math.max(2, result.fit.semiMinor * 0.02)) continue;
+      if (residual > Math.max(2.5, result.fit.semiMinor * 0.025)) continue;
       const closure = (path.at(-1)!.radius - path[0].radius) / jump;
       const score =
         (scores[end] - 2 * closure * closure) / count - 0.35 * residual;
@@ -298,5 +350,219 @@ export function traceDarkRing(
       }
     }
   }
-  return best.length >= count * 0.6 ? best : null;
+  return best.length >= count * 0.6
+    ? best
+    : tracePartialRing(
+        observed,
+        w,
+        h,
+        roi,
+        center,
+        gradientScale,
+        target,
+        prediction,
+      );
+}
+
+// Recover one ellipse from visible arcs when the screen clips the ring or a
+// stain removes part of it. Hypotheses are scored only against measured minima;
+// neither an image boundary nor a predicted point becomes a fit observation.
+function tracePartialRing(
+  rays: RingPoint[][],
+  w: number,
+  h: number,
+  roi: Region,
+  center: Point,
+  gradientScale: number,
+  target?: Point,
+  prediction?: Ellipse,
+): RingPoint[] | null {
+  const size = Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0);
+  const tolerance = Math.max(4, size * 0.025);
+  const candidates = rays.flat();
+  if (candidates.length < 80) return null;
+  const bins = new Map<number, number>();
+  for (const p of candidates) {
+    const bin = Math.round(p.radius / Math.max(6, size * 0.025));
+    bins.set(bin, (bins.get(bin) ?? 0) + 1);
+  }
+  const radii = [...bins]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([bin]) => bin * Math.max(6, size * 0.025));
+  const centers = prediction
+    ? []
+    : [
+        center,
+        { x: center.x + size * 0.16, y: center.y },
+        { x: center.x - size * 0.16, y: center.y },
+        { x: center.x, y: center.y + size * 0.16 },
+        { x: center.x, y: center.y - size * 0.16 },
+        { x: center.x + size * 0.08, y: center.y + size * 0.08 },
+        { x: center.x - size * 0.08, y: center.y - size * 0.08 },
+        { x: center.x + size * 0.08, y: center.y - size * 0.08 },
+        { x: center.x - size * 0.08, y: center.y + size * 0.08 },
+        { x: center.x + size * 0.04, y: center.y },
+        { x: center.x - size * 0.04, y: center.y },
+        { x: center.x, y: center.y + size * 0.04 },
+        { x: center.x, y: center.y - size * 0.04 },
+        { x: center.x + size * 0.08, y: center.y },
+        { x: center.x - size * 0.08, y: center.y },
+        { x: center.x, y: center.y + size * 0.08 },
+        { x: center.x, y: center.y - size * 0.08 },
+      ];
+  function select(fit: Ellipse, band = tolerance): RingPoint[] {
+    return rays.flatMap((ray) => {
+      let best: RingPoint | undefined,
+        distance = Infinity;
+      for (const p of ray) {
+        const d = Math.abs(ellipseResidual(p, fit));
+        const cost =
+          d -
+          band * 0.45 * Math.log1p(p.magnitude / Math.max(4, gradientScale));
+        if (d < band && cost < distance) {
+          best = p;
+          distance = cost;
+        }
+      }
+      return best ? [best] : [];
+    });
+  }
+  function plausible(fit: Ellipse) {
+    return (
+      fit.ratio >= 0.35 &&
+      fit.semiMinor >= size * 0.07 &&
+      fit.semiMajor < Math.max(roi.x1 - roi.x0, roi.y1 - roi.y0) * 0.85 &&
+      Math.hypot(fit.centerX - center.x, fit.centerY - center.y) <
+        size * 0.27 &&
+      (!target ||
+        Math.abs(ellipseResidual(target, fit)) < Math.max(7, size * 0.025))
+    );
+  }
+  const hypotheses: Array<{ fit: Ellipse; score: number }> = prediction
+    ? [{ fit: prediction, score: 0 }]
+    : [];
+  for (const origin of centers) {
+    const anchors = target
+      ? [Math.hypot(target.x - origin.x, target.y - origin.y)]
+      : radii;
+    for (const radius of anchors)
+      for (const ratio of [1, 0.9, 0.85, 0.8, 0.75, 0.7, 0.6])
+        for (const angle of ratio === 1 ? [0] : [0, 45, 90, 135]) {
+          const phi = target
+            ? Math.atan2(target.y - origin.y, target.x - origin.x) -
+              (angle * Math.PI) / 180
+            : 0;
+          const a = radius * Math.hypot(Math.cos(phi), Math.sin(phi) / ratio);
+          let fit: Ellipse = {
+            centerX: origin.x,
+            centerY: origin.y,
+            semiMajor: a,
+            semiMinor: a * ratio,
+            ratio,
+            angle,
+          };
+          if (!plausible(fit)) continue;
+          for (let pass = 0; pass < 3; pass++) {
+            const selected = select(fit, tolerance * (2 - pass * 0.5));
+            if (selected.length < rays.length * 0.3) break;
+            const next = initializeEllipse(selected);
+            if (!next || !plausible(next)) break;
+            fit = next;
+          }
+          const selected = select(fit);
+          if (
+            selected.length < rays.length * 0.3 ||
+            ellipseCoverage(selected, fit) < 0.6
+          )
+            continue;
+          const score = selected.reduce(
+            (sum, p) =>
+              sum +
+              1 -
+              (Math.abs(ellipseResidual(p, fit)) / tolerance) * 0.6 +
+              0.06 * Math.log1p(p.magnitude / Math.max(1, gradientScale)),
+            0,
+          );
+          hypotheses.push({ fit, score });
+        }
+  }
+  let bestEvidence: RingPoint[] | null = null,
+    bestSupport = -Infinity;
+  const diverse: typeof hypotheses = [];
+  for (const item of hypotheses.sort((a, b) => b.score - a.score)) {
+    if (
+      diverse.some(
+        (other) =>
+          Math.hypot(
+            item.fit.centerX - other.fit.centerX,
+            item.fit.centerY - other.fit.centerY,
+          ) < 4 &&
+          Math.abs(item.fit.semiMajor - other.fit.semiMajor) < 4 &&
+          Math.abs(item.fit.semiMinor - other.fit.semiMinor) < 4 &&
+          Math.abs(
+            Math.sin(((item.fit.angle - other.fit.angle) * Math.PI) / 180),
+          ) < 0.1,
+      )
+    )
+      continue;
+    diverse.push(item);
+    if (diverse.length >= 48) break;
+  }
+  for (const hypothesis of diverse) {
+    let points = select(hypothesis.fit);
+    let result = fitRobustEllipse(points, w, h);
+    for (let pass = 0; result && pass < 4; pass++) {
+      const nextPoints = select(result.fit),
+        next = fitRobustEllipse(nextPoints, w, h);
+      if (!next || !plausible(next.fit)) break;
+      points = nextPoints;
+      result = next;
+    }
+    if (
+      !result ||
+      !plausible(result.fit) ||
+      result.inliers.length < rays.length * 0.3 ||
+      result.coverage < 0.6
+    )
+      continue;
+    if (
+      target &&
+      rays[0][0] &&
+      Math.abs(ellipseResidual(rays[0][0], result.fit)) >
+        Math.max(2, Math.min(w, h) * 0.004)
+    )
+      continue;
+    const evidence = result.inliers.map((i) => points[i]);
+    // Distributed support prevents two short opposing arcs from masquerading
+    // as a well-observed ring just because their largest gap is small.
+    if (angularSupport(evidence, result.fit) < 0.4) continue;
+    if (result.rms > Math.max(2.5, result.fit.semiMinor * 0.025)) continue;
+    const support = evidence.length - result.rms * 5;
+    if (support > bestSupport) {
+      bestEvidence = evidence;
+      bestSupport = support;
+    }
+  }
+  return bestEvidence;
+}
+
+export function angularSupport(points: Point[], fit: Ellipse): number {
+  const occupied = new Set<number>(),
+    angle = (fit.angle * Math.PI) / 180,
+    c = Math.cos(angle),
+    s = Math.sin(angle);
+  for (const p of points) {
+    const dx = p.x - fit.centerX,
+      dy = p.y - fit.centerY;
+    const theta =
+      (Math.atan2(
+        (-dx * s + dy * c) / fit.semiMinor,
+        (dx * c + dy * s) / fit.semiMajor,
+      ) +
+        2 * Math.PI) %
+      (2 * Math.PI);
+    occupied.add(Math.floor((theta / (2 * Math.PI)) * 36));
+  }
+  return occupied.size / 36;
 }
