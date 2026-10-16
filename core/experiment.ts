@@ -68,6 +68,7 @@ export function recommend(samples: Array<{ metrics: Observation }>): Recommendat
   };
 }
 export function compareRounds(a: Round, b: Round) {
+  if((a.algorithmVersion??"ring-v1")!==(b.algorithmVersion??"ring-v1")) return {label:"算法版本不同",detail:"旧版与新版的识别方法不同，变化仅供查看，不能归因为仪器调整；请用新版重新建立基线。"};
   if(b.operation === "unrecorded") return {label:"仅比较变化",detail:"本轮未补充具体操作，已保存指标变化；不自动把变化归因于建议操作。"};
   if (a.confounds || b.confounds) return { label: '条件变化，暂不归因', detail: '存在拍摄或设置变化；保留差异，但不将变化归因于单项调整。' };
   const aSamples=independentSamples(a), bSamples=independentSamples(b);
@@ -95,7 +96,7 @@ export function inspectResidual(rounds: Round[]): Residual {
   const validChanges: number[] = [];
   for (let i = 1; i < rounds.length; i++) {
     const a = {...rounds[i - 1],samples:independentSamples(rounds[i - 1])}, b = {...rounds[i],samples:independentSamples(rounds[i])};
-    if (a.confounds || b.confounds || b.operation !== 'view' || a.samples.length < 3 || b.samples.length < 3 || [...a.samples, ...b.samples].some(s => s.metrics.damaged)) continue;
+    if (((a.algorithmVersion??"ring-v1")!==(b.algorithmVersion??"ring-v1")) || a.confounds || b.confounds || b.operation !== 'view' || a.samples.length < 3 || b.samples.length < 3 || [...a.samples, ...b.samples].some(s => s.metrics.damaged)) continue;
     const change = Math.abs(summarize(a, 'ratio') - summarize(b, 'ratio'));
     const noise = critical95(Math.min(a.samples.length, b.samples.length)) * Math.sqrt(deviation(a.samples.map(s => s.metrics.ratio)) ** 2 / a.samples.length + deviation(b.samples.map(s => s.metrics.ratio)) ** 2 / b.samples.length);
     if (change > noise) validChanges.push(change);

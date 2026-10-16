@@ -111,3 +111,10 @@ test('local recording supports browsers without secure-context crypto APIs', asy
     assert.equal(new Set(Array.from({length:20},()=>newRecordId())).size,20);
   } finally {if(descriptor)Object.defineProperty(globalThis,'crypto',descriptor);else delete globalThis.crypto;}
 });
+
+test('different fitting versions do not establish an intervention effect',()=>{
+  const a=round('a',[.94,.941,.939],{algorithmVersion:'ring-v1'});
+  const b=round('b',[.98,.981,.979],{algorithmVersion:'ring-v2'});
+  assert.equal(compareRounds(a,b).label,'算法版本不同');
+  assert.equal(compareRounds({...a,algorithmVersion:undefined},b).label,'算法版本不同');
+});

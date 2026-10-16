@@ -26,6 +26,8 @@ export default function Home() {
   const [metrics, setMetrics] = useState<ImageMetrics | null>(null);
   const [diagnosis, setDiagnosis] = useState<AiDiagnosis | null>(null);
   const [selectedCauses, setSelectedCauses] = useState<CauseId[]>([]);
+  const [selectingRing, setSelectingRing] = useState(false);
+  const [targetPoint, setTargetPoint] = useState<FitPoint | null>(null);
   const [manualFit, setManualFit] = useState(false);
   const [fitPoints, setFitPoints] = useState<FitPoint[]>([]);
   const [thinking, setThinking] = useState<"analysis" | "restore" | null>(null);
@@ -79,9 +81,12 @@ export default function Home() {
     const image = new Image();
     image.onload = () => {
       const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
-      canvas.width = Math.max(80, Math.round(image.naturalWidth * scale));
-      canvas.height = Math.max(80, Math.round(image.naturalHeight * scale));
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      if(targetPoint) {
+        context.strokeStyle="#f2a43a";context.lineWidth=2;context.beginPath();context.arc(targetPoint.x*canvas.width,targetPoint.y*canvas.height,8,0,2*Math.PI);context.stroke();
+      }
       if (!fitPoints.length) return;
       const fit = fitEllipseFromPoints(fitPoints, canvas.width, canvas.height);
       if (fit) {
@@ -109,7 +114,7 @@ export default function Home() {
       });
     };
     image.src = preview;
-  }, [preview, fitPoints]);
+  }, [preview, fitPoints, targetPoint]);
 
   const correction = useMemo(() => {
     if (!metrics) return { total: 1, parts: [] as Array<{ name: string; factor: number; formula: string }> };
@@ -144,13 +149,13 @@ export default function Home() {
     const circularDeviation = Math.max(0, (1 - metrics.ratio) * 100);
     const eccentricity = Math.sqrt(Math.max(0, 1 - metrics.ratio ** 2));
     const absoluteAngle = Math.abs(metrics.angle);
-    const orientation = absoluteAngle < 10
+    const orientation = metrics.ratio>.995 ? "接近正圆，主轴方向不稳定，不作方向归因" : absoluteAngle < 10
       ? "长轴近水平方向"
       : Math.abs(absoluteAngle - 90) < 10
         ? "长轴近垂直方向"
         : metrics.angle > 0
-          ? `长轴向右上倾斜 ${absoluteAngle.toFixed(1)}°`
-          : `长轴向右下倾斜 ${absoluteAngle.toFixed(1)}°`;
+          ? `长轴向右下倾斜 ${absoluteAngle.toFixed(1)}°`
+          : `长轴向右上倾斜 ${absoluteAngle.toFixed(1)}°`;
     const causeEvidence: Record<CauseId, string> = {
       tilt: `q = ${metrics.ratio.toFixed(3)}，${orientation}；${metrics.asymmetry < 0.34 ? "四象限响应较均匀，更接近投影压缩" : "同时存在方向不对称，需与受力因素联合复核"}。`,
       pressure: `四象限边缘不对称度为 ${(metrics.asymmetry * 100).toFixed(1)}%，环宽或亮度方向差异支持接触面受力不均的可能。`,
@@ -324,17 +329,19 @@ export default function Home() {
     setPreview(URL.createObjectURL(nextFile));
     setMetrics(null);
     setDiagnosis(null);
+    setSelectingRing(false);setTargetPoint(null);
     setManualFit(false);
     setFitPoints([]);
     setError("");
   }
 
   function addFitPoint(event: MouseEvent<HTMLCanvasElement>) {
-    if (!manualFit || !previewCanvas.current) return;
+    if ((!manualFit && !selectingRing) || !previewCanvas.current) return;
     const rect = previewCanvas.current.getBoundingClientRect();
     const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
-    setFitPoints((current) => [...current, { x, y }].slice(0, 16));
+    if(selectingRing) {setTargetPoint({x,y});setSelectingRing(false);setError("");return;}
+    setFitPoints((current) => [...current, { x, y }].slice(0, 32));
     setError("");
   }
 
@@ -348,7 +355,7 @@ export default function Home() {
 
   async function analyze(chosenFile: File | null = file, chosenBatch: File[] = batchFiles, automatic = false) {
     if (!chosenFile) {
-      setError("请先上传第一级牛顿环照片。");
+      setError("请先上传牛顿环照片。");
       return;
     }
     if (!automatic && manualFit && fitPoints.length < 5) {
@@ -359,13 +366,13 @@ export default function Home() {
     setError("");
     setThinking("analysis");
     try {
-      const measured = await inspectImage(chosenFile, !automatic && manualFit ? fitPoints : []);
+      const measured = await inspectImage(chosenFile, !automatic && manualFit ? fitPoints : [], true, !automatic ? targetPoint ?? undefined : undefined);
       let nextDiagnosis = builtinDiagnosis(measured);
       if (mode === "deepseek") {
         const response = await fetch("/api/deepseek", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ metrics: measured }),
+          body: JSON.stringify({ metrics: {ratio:measured.ratio,angle:measured.angle,centerOffset:measured.centerOffset,clarity:measured.clarity,asymmetry:measured.asymmetry,fitQuality:measured.fitQuality,confidence:measured.confidence,damaged:measured.damaged} }),
         });
         const payload = await response.json() as AiDiagnosis & { error?: string };
         if (!response.ok) throw new Error(payload.error || "增强诊断暂时没有返回结果");
@@ -388,7 +395,7 @@ export default function Home() {
         const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
         for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
           const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:"experiment", name:`牛顿环实验 ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
-          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v1",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v2",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
           const duplicates=samples.filter(s=>s.reused).length;
           setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。${duplicates ? `其中 ${duplicates} 张与已有照片重复，已保留曲线记录，但不计为新的独立测量。` : ""}`);
@@ -434,6 +441,7 @@ export default function Home() {
     setMetrics(null);
     setDiagnosis(null);
     setSelectedCauses([]);
+    setSelectingRing(false);setTargetPoint(null);
     setManualFit(false);
     setFitPoints([]);
     setError("");
@@ -482,6 +490,7 @@ export default function Home() {
     setMetrics(null);
     setDiagnosis(null);
     setSelectedCauses([]);
+    setSelectingRing(false);setTargetPoint(null);
     setManualFit(false);
     setFitPoints([]);
     setError("");
@@ -499,7 +508,7 @@ export default function Home() {
       : "未启用经验修正";
     return [
       "牛顿环实验数据还原报告",
-      `图像判断：${diagnosis?.verdict || "—"}（置信度 ${Math.round((diagnosis?.confidence || 0) * 100)}%）`,
+      `图像判断：${diagnosis?.verdict || "—"}（辅助评分 ${Math.round((diagnosis?.confidence || 0) * 100)}%，非统计概率）`,
       `AI 辅助建议（已由用户结合现场复核）：${causeText}`,
       `综合直径修正系数：${correction.total.toFixed(5)}`,
       autoCalibration ? `教学演示：渐进式标准半径标定：R₀ = ${STANDARD_RADIUS.toFixed(3)} m，α = ${CALIBRATION_STRENGTH.toFixed(2)}，k = ${calibrationInsight.factor.toFixed(6)}` : "未启用参考值修正；经验几何修正不等于恢复真实测量值。",
@@ -583,7 +592,7 @@ export default function Home() {
 
           <div className="hero-visual" aria-label="牛顿环分析示意图">
             <div className="visual-card">
-              <div className="visual-top"><span>牛顿环实验 · 第一级环拟合</span><b>● READY</b></div>
+              <div className="visual-top"><span>牛顿环实验 · 目标暗环拟合</span><b>● READY</b></div>
               <div className="ring-stage">
                 <div className="axis axis-x" />
                 <div className="axis axis-y" />
@@ -633,7 +642,7 @@ export default function Home() {
         <section className="workspace upload-workspace">
           <div className="section-heading">
             <span className="section-number">01</span>
-            <div><p>图像输入</p><h2>上传第一级圆环</h2><span>尽量裁剪到只保留完整圆环，画面越正、边缘越清晰，判断越稳定。</span></div>
+            <div><p>图像输入</p><h2>上传牛顿环照片</h2><span>自动拟合一条清晰暗环；若选环不符，可点选目标环或手动取点。</span></div>
           </div>
 
           {retestMode && <section className="flow-adjustment" aria-label="本轮调整记录"><h3>这次做了什么调整？<small>（选填）</small></h3><p>需要记录时，请先填写，再选择照片；上传后会和本轮结果一起保存。</p><label>操作类型<select value={roundOperation} onChange={e=>setRoundOperation(e.target.value)}><option value="view">观察方向</option><option value="focus">对焦与照明</option><option value="center">取景与读数轴</option><option value="repeat">同设置重复测量</option><option value="other">其他操作</option></select></label><label>实际调整<input placeholder="例如：重新对焦，保持相机位置不变" value={roundAction} onChange={e=>setRoundAction(e.target.value)}/></label><label>拍摄或光照变化<input value={roundConfounds} onChange={e=>setRoundConfounds(e.target.value)}/></label></section>}
@@ -656,7 +665,7 @@ export default function Home() {
               <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(event: ChangeEvent<HTMLInputElement>) => {const files=Array.from(event.target.files ?? []); if(files.length>8) {setError("每轮最多选择8张照片。");return;} if(files[0]) {updateFile(files[0]);setBatchFiles(files);event.target.value="";if(retestMode) void analyze(files[0],files,true);}}} />
               {preview ? (
                 <>
-                  <canvas ref={previewCanvas} className={manualFit ? "pointing" : ""} onClick={addFitPoint} role="img" aria-label="待分析的牛顿环；精准拟合开启时可点击圆环取点" />
+                  <canvas ref={previewCanvas} className={manualFit || selectingRing ? "pointing" : ""} onClick={addFitPoint} role="img" aria-label="待分析的牛顿环；精准拟合开启时可点击圆环取点" />
                   <div className="image-actions">
                     <button type="button" onClick={(event) => { event.stopPropagation(); fileInput.current?.click(); }}>更换照片</button>
                     <span>{file?.name}</span>
@@ -686,13 +695,14 @@ export default function Home() {
                 <i>{mode === "deepseek" ? "✓" : ""}</i>
               </button>
               {mode === "deepseek" && <div className="managed-ai-note"><span>✓</span><p><b>无需输入任何密钥</b><small>只提交长短轴比、偏心等量化特征，不上传原始照片。</small></p></div>}
+              {preview && <div className="fit-control"><div><span>◎</span><p><b>选择目标暗环</b><small>自动选环不符时，点选同一条暗纹的中心线</small></p><button type="button" onClick={()=>{setSelectingRing(!selectingRing);setManualFit(false);setFitPoints([]);setError("");}}>{selectingRing?"取消点选":"点选目标环"}</button></div>{selectingRing && <p className="fit-instruction">请在图片上点击要分析的暗环中心线，避开十字刻线及其邻近区域。</p>}{targetPoint && <p className="fit-instruction">已标记目标环。<button type="button" onClick={()=>setTargetPoint(null)}>恢复自动选环</button></p>}</div>}
               {preview && (
                 <div className={`fit-control ${manualFit ? "active" : ""}`}>
-                  <div><span>◎</span><p><b>精准轮廓拟合</b><small>适合显示器拍摄、带十字刻线的照片</small></p><button type="button" onClick={() => { setManualFit((current) => !current); setFitPoints([]); setError(""); }}>{manualFit ? "退出" : "开始取点"}</button></div>
-                  {manualFit && <><p className="fit-instruction">沿<strong>同一条清晰圆环</strong>均匀点击至少 5 个点，系统会直接用这些点拟合椭圆。</p><div className="fit-counter"><span>{fitPoints.length} / 5+ 个点</span><button type="button" onClick={() => setFitPoints((current) => current.slice(0, -1))} disabled={!fitPoints.length}>撤销</button><button type="button" onClick={() => setFitPoints([])} disabled={!fitPoints.length}>清空</button></div></>}
+                  <div><span>◎</span><p><b>精准轮廓拟合</b><small>适合显示器拍摄、带十字刻线的照片</small></p><button type="button" onClick={() => { setManualFit((current) => !current);setSelectingRing(false);setTargetPoint(null); setFitPoints([]); setError(""); }}>{manualFit ? "退出" : "开始取点"}</button></div>
+                  {manualFit && <><p className="fit-instruction">沿<strong>同一条暗纹中心线</strong>均匀点击至少 5 个点，覆盖至少三个象限，系统会直接用这些点拟合椭圆。</p><div className="fit-counter"><span>{fitPoints.length} / 5+ 个点</span><button type="button" onClick={() => setFitPoints((current) => current.slice(0, -1))} disabled={!fitPoints.length}>撤销</button><button type="button" onClick={() => setFitPoints([])} disabled={!fitPoints.length}>清空</button></div></>}
                 </div>
               )}
-              <div className="tip-card"><b>连续环边追踪与椭圆拟合</b><p>邻域中值抑制十字刻线、屏幕边框、摩尔纹与孤立污点，再通过环心迭代和离群点剔除稳定拟合；轮廓不足时停止输出。</p></div>
+              <div className="tip-card"><b>连续环边追踪与椭圆拟合</b><p>沿同一暗纹中心线进行亚像素定位，用异常点剔除和几何优化拟合；绿色为有效点，红色为剔除点。覆盖不足时请点选目标环或手动取点。</p></div>
               {error && <p className="error-message" role="alert">{error}</p>}
               <button className="primary full-button" type="button" onClick={()=>void analyze()} disabled={!file || thinking!==null}>分析圆环 <span>→</span></button>
             </aside>
@@ -717,7 +727,9 @@ export default function Home() {
               <div className="metric-strip">
                 <div><span>长短轴比</span><b>{metrics.ratio.toFixed(3)}</b></div>
                 <div><span>拟合质量</span><b>{Math.round(metrics.fitQuality * 100)}%</b></div>
-                <div><span>判断置信度</span><b>{Math.round(diagnosis.confidence * 100)}%</b></div>
+                <div><span>轮廓支持度</span><b>{Math.round(diagnosis.confidence * 100)}%</b></div>
+                {metrics.fitResidualPx !== undefined && <div><span>拟合残差（分析图像素）</span><b>{metrics.fitResidualPx.toFixed(2)} px</b></div>}
+                {metrics.fitCoverage !== undefined && <div><span>环周分布覆盖</span><b>{Math.round(metrics.fitCoverage*100)}%</b></div>}
               </div>
               <small className="mode-note">{mode === "deepseek" ? diagnosis.provider === "deepseek" ? "DeepSeek V4 Flash 已基于量化特征完成复核" : "增强服务未配置或不可用，已采用本地诊断" : "经验模型已完成本地分析"}</small>
             </div>

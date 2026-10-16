@@ -1,3 +1,6 @@
+import { bilinear, darkCandidates, traceDarkRing } from "./ring-tracking.ts";
+import { fitRobustEllipse, initializeEllipse } from "./ellipse.ts";
+import type { Ellipse } from "./ellipse.ts";
 export type CauseId = "tilt" | "pressure" | "decenter" | "calibration" | "damage";
 export type Mode = "empirical" | "deepseek";
 
@@ -13,6 +16,13 @@ export type ImageMetrics = {
   annotatedImage: string;
   fitMethod: "auto" | "manual";
   detectedScreen: boolean;
+  ellipse?: EllipseFit & { imageWidth:number; imageHeight:number };
+  contourPoints?: Array<FitPoint & { inlier:boolean }>;
+  processingMs?: number;
+  fitResidualPx?: number;
+  fitCoverage?: number;
+  fitInlierFraction?: number;
+  contourKind?: "dark-centerline" | "manual-points";
 };
 
 export type AiDiagnosis = {
@@ -24,7 +34,7 @@ export type AiDiagnosis = {
 };
 
 export type FitPoint = { x: number; y: number };
-type EllipseFit = { centerX: number; centerY: number; semiMajor: number; semiMinor: number; ratio: number; angle: number };
+type EllipseFit = Ellipse;
 
 export const ORDERS = [5, 10, 15, 20, 25, 30, 35, 40];
 export const STANDARD_RADIUS = 1.0;
@@ -171,68 +181,19 @@ export function buildAiSuggestions(metrics: ImageMetrics, diagnosis: AiDiagnosis
   return ranked.map((item) => ({ ...item, recommended: recommendedIds.has(item.id) }));
 }
 
-function solveLinearSystem(matrix: number[][], vector: number[]) {
-  const size = vector.length;
-  const augmented = matrix.map((row, index) => [...row, vector[index]]);
-  for (let column = 0; column < size; column += 1) {
-    let pivot = column;
-    for (let row = column + 1; row < size; row += 1) {
-      if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
-    }
-    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
-    const divisor = augmented[column][column];
-    if (Math.abs(divisor) < 1e-10) return null;
-    for (let j = column; j <= size; j += 1) augmented[column][j] /= divisor;
-    for (let row = 0; row < size; row += 1) {
-      if (row === column) continue;
-      const factor = augmented[row][column];
-      for (let j = column; j <= size; j += 1) augmented[row][j] -= factor * augmented[column][j];
-    }
-  }
-  return augmented.map((row) => row[size]);
-}
-
 export function fitEllipseFromPoints(points: FitPoint[], width: number, height: number): EllipseFit | null {
-  if (points.length < 5) return null;
-  const scale = Math.max(width, height);
-  const rows = points.map((point) => {
-    const x = (point.x * width - width / 2) / scale;
-    const y = (point.y * height - height / 2) / scale;
-    return [x * x, x * y, y * y, x, y];
-  });
-  const normal = Array.from({ length: 5 }, () => Array(5).fill(0));
-  const target = Array(5).fill(0);
-  for (const row of rows) {
-    for (let i = 0; i < 5; i += 1) {
-      target[i] += row[i];
-      for (let j = 0; j < 5; j += 1) normal[i][j] += row[i] * row[j];
-    }
-  }
-  for (let i = 0; i < 5; i += 1) normal[i][i] += 1e-8;
-  const solved = solveLinearSystem(normal, target);
-  if (!solved) return null;
-  const [a, b, c, d, e] = solved;
-  const determinant = a * c - (b * b) / 4;
-  if (determinant <= 1e-9) return null;
-  const centerXNorm = (b * e - 2 * c * d) / (4 * determinant);
-  const centerYNorm = (b * d - 2 * a * e) / (4 * determinant);
-  const constant = 1 + a * centerXNorm ** 2 + b * centerXNorm * centerYNorm + c * centerYNorm ** 2;
-  const root = Math.sqrt(Math.max(0, (a - c) ** 2 + b ** 2));
-  const lambdaLarge = (a + c + root) / 2;
-  const lambdaSmall = (a + c - root) / 2;
-  if (constant <= 0 || lambdaSmall <= 0 || lambdaLarge <= 0) return null;
-  const semiMajor = Math.sqrt(constant / lambdaSmall) * scale;
-  const semiMinor = Math.sqrt(constant / lambdaLarge) * scale;
-  let angle = ((0.5 * Math.atan2(b, a - c) + Math.PI / 2) * 180) / Math.PI;
-  while (angle > 90) angle -= 180;
-  while (angle < -90) angle += 180;
-  const centerX = centerXNorm * scale + width / 2;
-  const centerY = centerYNorm * scale + height / 2;
-  if (semiMajor > scale * 1.2 || semiMinor < 3 || centerX < -width * 0.25 || centerX > width * 1.25 || centerY < -height * 0.25 || centerY > height * 1.25) return null;
-  return { centerX, centerY, semiMajor, semiMinor, ratio: clamp(semiMinor / semiMajor, 0.35, 1), angle };
+  return fitRobustEllipse(points.map(p=>({x:p.x*width,y:p.y*height})),width,height)?.fit ?? null;
 }
 
-function longestRun(flags: boolean[]) {
+function longestRun(input: boolean[]) {
+  const flags=[...input];
+  // A thin crosshair must not split one illuminated screen into two regions.
+  const limit=Math.max(2,Math.round(flags.length*.025));
+  for(let i=0;i<flags.length;) {
+    if(flags[i]){i++;continue;}
+    const start=i;while(i<flags.length&&!flags[i])i++;
+    if(start>0 && i<flags.length && i-start<=limit)for(let j=start;j<i;j++)flags[j]=true;
+  }
   let bestStart = 0;
   let bestEnd = -1;
   let currentStart = -1;
@@ -305,10 +266,10 @@ function robustGradientSample(
   for (const tangentOffset of [-4, -2, 0, 2, 4]) {
     let localMaximum = 0;
     for (const radialOffset of [-1, 0, 1]) {
-      const sampleX = Math.round(x + cosine * radialOffset - sine * tangentOffset);
-      const sampleY = Math.round(y + sine * radialOffset + cosine * tangentOffset);
+      const sampleX = x + cosine * radialOffset - sine * tangentOffset;
+      const sampleY = y + sine * radialOffset + cosine * tangentOffset;
       if (sampleX <= 1 || sampleX >= width - 2 || sampleY <= 1 || sampleY >= height - 2) continue;
-      localMaximum = Math.max(localMaximum, gradient[sampleY * width + sampleX]);
+      localMaximum = Math.max(localMaximum, bilinear(gradient,width,height,sampleX,sampleY));
     }
     tangentialSamples.push(localMaximum);
   }
@@ -316,144 +277,14 @@ function robustGradientSample(
 }
 
 function robustEllipseFromRing(points: RingCandidate[], width: number, height: number) {
-  if (points.length < 20) return null;
-  let inliers = points;
-  let fit: EllipseFit | null = null;
-  for (let iteration = 0; iteration < 4; iteration += 1) {
-    fit = fitEllipseFromPoints(inliers.map((point) => ({ x: point.x / width, y: point.y / height })), width, height);
-    if (!fit) return null;
-    const angle = (fit.angle * Math.PI) / 180;
-    const cosine = Math.cos(angle);
-    const sine = Math.sin(angle);
-    const residuals = points.map((point) => {
-      const dx = point.x - fit!.centerX;
-      const dy = point.y - fit!.centerY;
-      const alongMajor = dx * cosine + dy * sine;
-      const alongMinor = -dx * sine + dy * cosine;
-      return Math.abs(Math.hypot(alongMajor / fit!.semiMajor, alongMinor / fit!.semiMinor) - 1);
-    });
-    const residualMedian = median(residuals);
-    const mad = median(residuals.map((value) => Math.abs(value - residualMedian)));
-    const threshold = clamp(residualMedian + Math.max(0.018, mad * 3.2), 0.035, 0.14);
-    const nextInliers = points.filter((_, index) => residuals[index] <= threshold);
-    if (nextInliers.length < points.length * 0.62 || nextInliers.length < 18) break;
-    if (nextInliers.length === inliers.length) {
-      inliers = nextInliers;
-      break;
-    }
-    inliers = nextInliers;
-  }
-  if (!fit) return null;
-  const angle = (fit.angle * Math.PI) / 180;
-  const cosine = Math.cos(angle);
-  const sine = Math.sin(angle);
-  const residuals = points.map((point) => {
-    const dx = point.x - fit!.centerX;
-    const dy = point.y - fit!.centerY;
-    const alongMajor = dx * cosine + dy * sine;
-    const alongMinor = -dx * sine + dy * cosine;
-    return Math.abs(Math.hypot(alongMajor / fit!.semiMajor, alongMinor / fit!.semiMinor) - 1);
-  }).sort((a, b) => a - b);
-  const trimmed = residuals.slice(0, Math.max(1, Math.floor(residuals.length * 0.86)));
-  const residual = trimmed.reduce((sum, value) => sum + value, 0) / trimmed.length;
-  return { fit, residual, inlierCoverage: inliers.length / points.length };
+  if(points.length<20)return null;
+  const result=fitRobustEllipse(points,width,height);
+  if(!result || result.coverage<.6)return null;
+  return {fit:result.fit,residual:result.rms/result.fit.semiMinor,inlierCoverage:result.inliers.length/points.length,coverage:result.coverage,inliers:result.inliers,rms:result.rms};
 }
 
-function ringCandidateScore(candidate: RingCandidate, gradientScale: number) {
-  const edgeProximity = candidate.radius / Math.max(1, candidate.maxRadius);
-  return 2.5 * candidate.magnitude / gradientScale - 0.42 * edgeProximity ** 4;
-}
-
-function traceContinuousRing(
-  gradient: Float32Array,
-  width: number,
-  height: number,
-  roi: { x0: number; x1: number; y0: number; y1: number },
-  center: { x: number; y: number },
-  gradientScale: number,
-) {
-  const angleCount = 120;
-  const minDimension = Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0);
-  const minimumRadius = Math.max(10, minDimension * 0.12);
-  const candidates: RingCandidate[][] = [];
-
-  for (let index = 0; index < angleCount; index += 1) {
-    const theta = (index / angleCount) * Math.PI * 2;
-    const cosine = Math.cos(theta);
-    const sine = Math.sin(theta);
-    const hitX = Math.abs(cosine) < 1e-5 ? Number.POSITIVE_INFINITY : (cosine > 0 ? roi.x1 - center.x : roi.x0 - center.x) / cosine;
-    const hitY = Math.abs(sine) < 1e-5 ? Number.POSITIVE_INFINITY : (sine > 0 ? roi.y1 - center.y : roi.y0 - center.y) / sine;
-    const maximumRadius = Math.max(minimumRadius + 4, Math.min(hitX, hitY) * 0.94);
-    const samples: RingCandidate[] = [];
-    for (let radius = minimumRadius; radius <= maximumRadius; radius += 2) {
-      const x = Math.round(center.x + cosine * radius);
-      const y = Math.round(center.y + sine * radius);
-      if (x <= 1 || x >= width - 2 || y <= 1 || y >= height - 2) continue;
-      samples.push({
-        x,
-        y,
-        radius,
-        magnitude: robustGradientSample(gradient, width, height, x, y, cosine, sine),
-        maxRadius: maximumRadius,
-      });
-    }
-    const localPeaks = samples.filter((sample, sampleIndex) => {
-      const before = samples[Math.max(0, sampleIndex - 1)]?.magnitude ?? sample.magnitude;
-      const after = samples[Math.min(samples.length - 1, sampleIndex + 1)]?.magnitude ?? sample.magnitude;
-      return sample.magnitude >= before && sample.magnitude >= after;
-    }).sort((a, b) => b.magnitude - a.magnitude);
-    const selected: RingCandidate[] = [];
-    for (const candidate of localPeaks) {
-      if (selected.every((existing) => Math.abs(existing.radius - candidate.radius) >= Math.max(7, minDimension * 0.018))) selected.push(candidate);
-      if (selected.length === 8) break;
-    }
-    if (!selected.length && samples.length) selected.push(samples.reduce((best, sample) => sample.magnitude > best.magnitude ? sample : best));
-    candidates.push(selected.sort((a, b) => a.radius - b.radius));
-  }
-
-  if (candidates.some((items) => !items.length)) return null;
-  const jumpScale = Math.max(11, minDimension * 0.055);
-  let bestScore = Number.NEGATIVE_INFINITY;
-  let bestPath: RingCandidate[] = [];
-
-  for (let start = 0; start < candidates[0].length; start += 1) {
-    let scores = candidates[0].map((candidate, candidateIndex) => candidateIndex === start
-      ? ringCandidateScore(candidate, gradientScale)
-      : Number.NEGATIVE_INFINITY);
-    const backPointers: number[][] = [candidates[0].map(() => -1)];
-    for (let angleIndex = 1; angleIndex < angleCount; angleIndex += 1) {
-      const previous = candidates[angleIndex - 1];
-      const current = candidates[angleIndex];
-      const nextScores = current.map(() => Number.NEGATIVE_INFINITY);
-      const pointers = current.map(() => -1);
-      current.forEach((candidate, currentIndex) => {
-        previous.forEach((prior, priorIndex) => {
-          const jump = (candidate.radius - prior.radius) / jumpScale;
-          const score = scores[priorIndex] - 1.9 * jump * jump + ringCandidateScore(candidate, gradientScale);
-          if (score > nextScores[currentIndex]) {
-            nextScores[currentIndex] = score;
-            pointers[currentIndex] = priorIndex;
-          }
-        });
-      });
-      scores = nextScores;
-      backPointers.push(pointers);
-    }
-    scores.forEach((score, end) => {
-      const closure = (candidates[angleCount - 1][end].radius - candidates[0][start].radius) / jumpScale;
-      const closedScore = score - 2.4 * closure * closure;
-      if (closedScore <= bestScore) return;
-      const path = Array<RingCandidate>(angleCount);
-      let cursor = end;
-      for (let angleIndex = angleCount - 1; angleIndex >= 0; angleIndex -= 1) {
-        path[angleIndex] = candidates[angleIndex][cursor];
-        cursor = backPointers[angleIndex][cursor];
-      }
-      bestScore = closedScore;
-      bestPath = path;
-    });
-  }
-  return bestPath.length === angleCount ? bestPath : null;
+function traceContinuousRing(gray: Float32Array, width: number, height: number, roi: {x0:number;x1:number;y0:number;y1:number}, center: {x:number;y:number}, gradientScale:number, target?:FitPoint, prediction?:EllipseFit, guide?:{x?:number;y?:number}) {
+  return traceDarkRing(gray,width,height,roi,center,gradientScale,target,prediction,guide);
 }
 
 function detectGuideLine(
@@ -467,6 +298,7 @@ function detectGuideLine(
   const end = Math.round((axis === "vertical" ? roi.x0 : roi.y0) + (axis === "vertical" ? roi.x1 - roi.x0 : roi.y1 - roi.y0) * 0.68);
   let bestCoordinate = (start + end) / 2;
   let bestScore = Number.NEGATIVE_INFINITY;
+  let bestSupport=0;
   for (let coordinate = start; coordinate <= end; coordinate += 1) {
     const contrasts: number[] = [];
     const alongStart = axis === "vertical" ? roi.y0 : roi.x0;
@@ -490,12 +322,47 @@ function detectGuideLine(
     if (score > bestScore) {
       bestScore = score;
       bestCoordinate = coordinate;
+      bestSupport=contrasts.filter(v=>v>12).length/Math.max(1,contrasts.length);
     }
   }
-  return { coordinate: bestCoordinate, strength: bestScore };
+  return { coordinate: bestCoordinate, strength: bestScore, support:bestSupport };
 }
 
-export async function inspectImage(file: File, manualPoints: FitPoint[] = [], annotate = true): Promise<ImageMetrics> {
+function refineSourceRing(image: HTMLImageElement, fit: EllipseFit, width: number, height: number,guide:{x?:number;y?:number}): RingCandidate[] | null {
+  const angle=fit.angle*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle);
+  const ex=Math.hypot(fit.semiMajor*c,fit.semiMinor*s)+10,ey=Math.hypot(fit.semiMajor*s,fit.semiMinor*c)+10;
+  const sx=image.naturalWidth/width,sy=image.naturalHeight/height;
+  const x=Math.max(0,Math.floor((fit.centerX-ex)*sx)),y=Math.max(0,Math.floor((fit.centerY-ey)*sy));
+  const sourceWidth=Math.min(image.naturalWidth-x,Math.ceil(2*ex*sx)),sourceHeight=Math.min(image.naturalHeight-y,Math.ceil(2*ey*sy));
+  const scale=Math.min(1,1800/Math.max(sourceWidth,sourceHeight));
+  const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(sourceWidth*scale));canvas.height=Math.max(1,Math.round(sourceHeight*scale));
+  const context=canvas.getContext('2d',{willReadFrequently:true});if(!context)return null;
+  context.drawImage(image,x,y,sourceWidth,sourceHeight,0,0,canvas.width,canvas.height);
+  const gx=canvas.width/sourceWidth,gy=canvas.height/sourceHeight;
+  const toLocal=(px:number,py:number)=>({x:(px*sx-x)*gx,y:(py*sy-y)*gy});
+  const outline=Array.from({length:40},(_,i)=>{const t=i/40*2*Math.PI;return toLocal(fit.centerX+fit.semiMajor*Math.cos(t)*c-fit.semiMinor*Math.sin(t)*s,fit.centerY+fit.semiMajor*Math.cos(t)*s+fit.semiMinor*Math.sin(t)*c);});
+  const predicted=initializeEllipse(outline);if(!predicted)return null;
+  const pixels=context.getImageData(0,0,canvas.width,canvas.height).data,gray=new Float32Array(canvas.width*canvas.height);
+  for(let i=0;i<gray.length;i++)gray[i]=pixels[4*i]*.299+pixels[4*i+1]*.587+pixels[4*i+2]*.114;
+  const points:RingCandidate[]=[];
+  for(let i=0;i<240;i++) {
+    const theta=i/240*2*Math.PI,phi=theta-predicted.angle*Math.PI/180;
+    const radius=1/Math.hypot(Math.cos(phi)/predicted.semiMajor,Math.sin(phi)/predicted.semiMinor);
+    const band=Math.max(3,Math.min(10*sx*gx,predicted.semiMinor*.035));
+    const candidates=darkCandidates(gray,canvas.width,canvas.height,{x:predicted.centerX,y:predicted.centerY},theta,Math.max(2,radius-band),radius+band,1.5);
+    if(!candidates.length)continue;
+    const best=candidates.reduce((a,b)=>Math.abs(a.radius-radius)<Math.abs(b.radius-radius)?a:b);
+    const px=(best.x/gx+x)/sx,py=(best.y/gy+y)/sy;
+    if((guide.x!==undefined&&Math.abs(px-guide.x)<6)||(guide.y!==undefined&&Math.abs(py-guide.y)<6))continue;
+    points.push({x:px,y:py,radius:Math.hypot(px-fit.centerX,py-fit.centerY),magnitude:best.magnitude,maxRadius:Math.max(width,height)});
+  }
+  // Release the potentially large fine-pass canvas before constructing overlays.
+  canvas.width=1;canvas.height=1;
+  return points.length>=144?points:null;
+}
+
+export async function inspectImage(file: File, manualPoints: FitPoint[] = [], annotate = true, targetPoint?: FitPoint): Promise<ImageMetrics> {
+  const started=performance.now();
   const url = URL.createObjectURL(file);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -507,8 +374,9 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
 
     const maxSide = 900;
     const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-    const width = Math.max(80, Math.round(image.naturalWidth * scale));
-    const height = Math.max(80, Math.round(image.naturalHeight * scale));
+    if(Math.min(image.naturalWidth,image.naturalHeight)<80) throw new Error("图像尺寸过小，请提供原始照片。");
+    const width = Math.round(image.naturalWidth * scale);
+    const height = Math.round(image.naturalHeight * scale);
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -563,14 +431,15 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
 
     let guideCenterX = (x0 + x1) / 2;
     let guideCenterY = (y0 + y1) / 2;
-    if (detectedScreen && manualPoints.length < 5) {
+    const guideMask:{x?:number;y?:number}={};
+    if (manualPoints.length < 5) {
       const verticalGuide = detectGuideLine(gray, width, height, { x0, x1, y0, y1 }, "vertical");
       const horizontalGuide = detectGuideLine(gray, width, height, { x0, x1, y0, y1 }, "horizontal");
-      if (verticalGuide.strength > 1.4) guideCenterX = verticalGuide.coordinate;
-      if (horizontalGuide.strength > 1.4) guideCenterY = horizontalGuide.coordinate;
+      if (verticalGuide.strength > 10 && verticalGuide.support>.55) {guideCenterX=verticalGuide.coordinate;guideMask.x=verticalGuide.coordinate;}
+      if (horizontalGuide.strength > 10 && horizontalGuide.support>.55) {guideCenterY=horizontalGuide.coordinate;guideMask.y=horizontalGuide.coordinate;}
     }
 
-    const blurRadius = clamp(Math.round(Math.max(width, height) / 145), 4, 8);
+    const blurRadius = clamp(Math.round(Math.max(width, height) / 450), 1, 3);
     const blurred = boxBlur(boxBlur(gray, width, height, blurRadius), width, height, Math.max(2, Math.round(blurRadius / 2)));
     const gradient = new Float32Array(width * height);
     const gradientSamples: number[] = [];
@@ -590,26 +459,30 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
     const q65 = gradientSamples[Math.floor(gradientSamples.length * 0.65)] || 0;
     const q76 = gradientSamples[Math.floor(gradientSamples.length * 0.76)] || q65;
     const q92 = Math.max(1, gradientSamples[Math.floor(gradientSamples.length * 0.92)] || 1);
-    let tracked = traceContinuousRing(
-      gradient,
+    const manualResult=manualPoints.length>=5?fitRobustEllipse(manualPoints.map(p=>({x:p.x*width,y:p.y*height})),width,height):null;
+    if(manualPoints.length>=5 && (!manualResult || manualResult.coverage<.55)) throw new Error("取点覆盖不足或不构成可靠椭圆，请沿同一暗环均匀取点，覆盖至少三个象限。");
+    const target=targetPoint?{x:targetPoint.x*width,y:targetPoint.y*height}:undefined;
+    let tracked:RingCandidate[] | null = manualResult ? manualPoints.map(p=>({x:p.x*width,y:p.y*height,radius:Math.hypot(p.x*width-manualResult.fit.centerX,p.y*height-manualResult.fit.centerY),magnitude:robustGradientSample(gradient,width,height,p.x*width,p.y*height,1,0),maxRadius:Math.max(width,height)})) : traceContinuousRing(
+      blurred,
       width,
       height,
       { x0, x1, y0, y1 },
       { x: guideCenterX, y: guideCenterY },
-      q92,
+      q92, target, undefined, guideMask,
     );
-    if (!tracked) throw new Error("没有识别到连续的牛顿环边缘，请重新裁剪或使用精准取点");
+    if(!tracked && manualResult) tracked=manualPoints.map(p=>({x:p.x*width,y:p.y*height,radius:Math.hypot(p.x*width-manualResult.fit.centerX,p.y*height-manualResult.fit.centerY),magnitude:robustGradientSample(gradient,width,height,p.x*width,p.y*height,1,0),maxRadius:Math.max(width,height)}));
+    if (!tracked) throw new Error("没有找到可靠的同一条暗环，请点选目标暗环、重新裁剪或使用手动取点。");
 
-    let robustAutoFit = robustEllipseFromRing(tracked, width, height);
+    let robustAutoFit = manualResult ? null : robustEllipseFromRing(tracked, width, height);
     if (robustAutoFit && manualPoints.length < 5) {
       for (let iteration = 0; iteration < 2; iteration += 1) {
         const retraced = traceContinuousRing(
-          gradient,
+          blurred,
           width,
           height,
           { x0, x1, y0, y1 },
           { x: robustAutoFit.fit.centerX, y: robustAutoFit.fit.centerY },
-          q92,
+          q92, target, robustAutoFit.fit, guideMask,
         );
         if (!retraced) break;
         const refined = robustEllipseFromRing(retraced, width, height);
@@ -619,84 +492,25 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
       }
     }
 
-    let centerX = tracked.reduce((sum, point) => sum + point.x, 0) / tracked.length;
-    let centerY = tracked.reduce((sum, point) => sum + point.y, 0) / tracked.length;
-    let xx = 0;
-    let yy = 0;
-    let xy = 0;
-    const quadrants = [0, 0, 0, 0];
-    for (const point of tracked) {
-      const dx = point.x - centerX;
-      const dy = point.y - centerY;
-      xx += dx * dx;
-      yy += dy * dy;
-      xy += dx * dy;
-      quadrants[(point.x >= centerX ? 1 : 0) + (point.y >= centerY ? 2 : 0)] += point.magnitude;
+    if(robustAutoFit && !manualResult) {
+      const finePoints=refineSourceRing(image,robustAutoFit.fit,width,height,guideMask);
+      const fine=finePoints?robustEllipseFromRing(finePoints,width,height):null;
+      if(fine && Math.abs(fine.fit.ratio-robustAutoFit.fit.ratio)<.06 && Math.hypot(fine.fit.centerX-robustAutoFit.fit.centerX,fine.fit.centerY-robustAutoFit.fit.centerY)<5 && Math.abs(fine.fit.semiMajor/robustAutoFit.fit.semiMajor-1)<.05 && fine.rms<=Math.max(1,robustAutoFit.rms*1.2)) {tracked=finePoints!;robustAutoFit=fine;}
     }
-    xx /= tracked.length;
-    yy /= tracked.length;
-    xy /= tracked.length;
-    const trace = xx + yy;
-    const root = Math.sqrt(Math.max(0, (xx - yy) ** 2 + 4 * xy ** 2));
-    const major = Math.max(1, (trace + root) / 2);
-    const minor = Math.max(1, (trace - root) / 2);
-    let ratio = clamp(Math.sqrt(minor / major), 0.35, 1);
-    let angle = (0.5 * Math.atan2(2 * xy, xx - yy) * 180) / Math.PI;
-    while (angle > 90) angle -= 180;
-    while (angle < -90) angle += 180;
-    let semiMajor = clamp(Math.sqrt(2 * major), Math.min(width, height) * 0.08, Math.max(x1 - x0, y1 - y0) * 0.54);
-    let semiMinor = semiMajor * ratio;
-
-    if (robustAutoFit) {
-      centerX = robustAutoFit.fit.centerX;
-      centerY = robustAutoFit.fit.centerY;
-      semiMajor = robustAutoFit.fit.semiMajor;
-      semiMinor = robustAutoFit.fit.semiMinor;
-      ratio = robustAutoFit.fit.ratio;
-      angle = robustAutoFit.fit.angle;
-    }
-
-    const angleRadians = (angle * Math.PI) / 180;
-    const cosine = Math.cos(angleRadians);
-    const sine = Math.sin(angleRadians);
-    const radialResiduals = tracked.map((point) => {
-      const dx = point.x - centerX;
-      const dy = point.y - centerY;
-      const alongMajor = dx * cosine + dy * sine;
-      const alongMinor = -dx * sine + dy * cosine;
-      return Math.abs(Math.hypot(alongMajor / semiMajor, alongMinor / semiMinor) - 1);
-    });
-    const sortedResiduals = [...radialResiduals].sort((a, b) => a - b);
-    const trimmedResiduals = sortedResiduals.slice(0, Math.max(1, Math.floor(sortedResiduals.length * 0.86)));
-    let fitResidual = trimmedResiduals.reduce((sum, value) => sum + value, 0) / trimmedResiduals.length;
-    let radialRoughness = 0;
-    for (let index = 0; index < tracked.length; index += 1) {
-      const previous = tracked[(index + tracked.length - 1) % tracked.length].radius;
-      radialRoughness += Math.abs(tracked[index].radius - previous);
-    }
-    radialRoughness /= tracked.length * Math.max(1, Math.min(x1 - x0, y1 - y0));
-    const meanMagnitude = tracked.reduce((sum, point) => sum + point.magnitude, 0) / tracked.length;
-    const contrastScore = clamp((meanMagnitude - q65) / Math.max(1, q92 - q65), 0, 1);
-    const edgeCoverage = tracked.filter((point) => point.magnitude >= q76).length / tracked.length;
-    const inlierCoverage = robustAutoFit?.inlierCoverage ?? 0.72;
-    const residualScore = clamp(1 - fitResidual / 0.13, 0, 1);
-    const smoothnessScore = clamp(1 - radialRoughness / 0.042, 0, 1);
-    let fitQuality = clamp(contrastScore * 0.24 + edgeCoverage * 0.14 + residualScore * 0.34 + smoothnessScore * 0.16 + inlierCoverage * 0.09 + (detectedScreen ? 0.03 : 0), 0, 1);
-
-    let fitMethod: "auto" | "manual" = "auto";
-    const manualFit = fitEllipseFromPoints(manualPoints, width, height);
-    if (manualFit) {
-      centerX = manualFit.centerX;
-      centerY = manualFit.centerY;
-      semiMajor = manualFit.semiMajor;
-      semiMinor = manualFit.semiMinor;
-      ratio = manualFit.ratio;
-      angle = manualFit.angle;
-      fitResidual = 0.02;
-      fitQuality = 0.96;
-      fitMethod = "manual";
-    }
-
+    if(!robustAutoFit && !manualResult) throw new Error("轮廓无法通过椭圆一致性检查，请点选目标暗环或重新取点。");
+    const result=manualResult ?? {fit:robustAutoFit!.fit,rms:robustAutoFit!.rms,coverage:robustAutoFit!.coverage,inliers:robustAutoFit!.inliers};
+    const {centerX,centerY,semiMajor,semiMinor,ratio,angle}=result.fit;
+    const fitResidual=result.rms/semiMinor;
+    const fitMethod: "auto" | "manual" = manualResult?"manual":"auto";
+    const quadrants=[0,0,0,0];
+    for(const point of tracked)quadrants[(point.x>=centerX?1:0)+(point.y>=centerY?2:0)]+=point.magnitude;
+    const meanMagnitude=tracked.reduce((sum,p)=>sum+p.magnitude,0)/tracked.length;
+    const contrastScore=clamp((meanMagnitude-q65)/Math.max(1,q92-q65),0,1);
+    const edgeCoverage=tracked.filter(p=>p.magnitude>=q76).length/tracked.length;
+    const fitInlierFraction=result.inliers.length/tracked.length;
+    const residualScore=Math.exp(-((result.rms/Math.max(.8,Math.min(width,height)*.0015))**2));
+    const fitQuality=clamp((residualScore*.5+result.coverage*.2+fitInlierFraction*.15+contrastScore*.15)*Math.min(1,contrastScore/.2),0,1);
+    const fitResidualPx=result.rms,fitCoverage=result.coverage;
     const quadrantTotal = quadrants.reduce((sum, value) => sum + value, 0) || 1;
     const normalizedQuadrants = quadrants.map((value) => value / quadrantTotal);
     const asymmetry = clamp((Math.max(...normalizedQuadrants) - Math.min(...normalizedQuadrants)) * 2.2, 0, 1);
@@ -706,10 +520,12 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
       1,
     );
     const clarity = clamp(contrastScore * 0.7 + edgeCoverage * 0.3, 0, 1);
-    const damaged = fitMethod === "auto" && (fitQuality < 0.48 || fitResidual > 0.2 || edgeCoverage < 0.28);
-    const confidence = clamp(0.46 + fitQuality * 0.46 + (fitMethod === "manual" ? 0.06 : 0), 0.5, 0.98);
+    const damaged = fitQuality < 0.48 || fitResidual > 0.08 || fitCoverage < 0.6 || contrastScore<.08 || (fitMethod === "auto" && edgeCoverage < 0.28);
+    const confidence = clamp(fitQuality, 0, 0.98);
 
     context.save();
+    const accepted=new Set(result.inliers);
+    tracked.forEach((point,i)=>{context.fillStyle=accepted.has(i)?"rgba(72,202,142,.85)":"rgba(255,105,92,.9)";context.beginPath();context.arc(point.x,point.y,Math.max(1.1,width/700),0,Math.PI*2);context.fill();});
     context.lineWidth = Math.max(2, width / 420);
     if (!damaged) {
       context.strokeStyle = "rgba(201, 239, 99, 0.98)";
@@ -737,7 +553,7 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
     context.restore();
     const annotatedImage = annotate ? canvas.toDataURL("image/jpeg", 0.9) : "";
 
-    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen };
+    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, ellipse:damaged?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:manualResult?"manual-points":"dark-centerline" };
   } finally {
     URL.revokeObjectURL(url);
   }

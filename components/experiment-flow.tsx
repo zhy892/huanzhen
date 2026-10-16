@@ -19,6 +19,8 @@ export default function ExperimentFlow({ session, onChange, onResume, onClose, e
       if (recordDetails.current) recordDetails.current.open = true;
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
       const images = Array.from(recordDetails.current?.querySelectorAll('img') ?? []);
+      // Load offscreen round photos before decoding them for the printed record.
+      images.forEach(image => { image.loading = 'eager'; });
       await Promise.all(images.map(image => image.decode().catch(() => undefined)));
       window.print();
     });
