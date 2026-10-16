@@ -13,6 +13,16 @@ function Photo({ image, name }: { image: Blob; name: string }) {
   return <img ref={ref} alt={name} loading="lazy"/>;
 }
 export default function ExperimentFlow({ session, onChange, onResume, onClose, embedded = false, notice = "" }: { embedded?: boolean; notice?: string; session: Session | null; onChange: (s: Session) => void; onResume: (s: Session) => void; onClose: () => void }) {
+  const recordDetails = useRef<HTMLDetailsElement>(null);
+  function outputRecord() {
+    void run(async () => {
+      if (recordDetails.current) recordDetails.current.open = true;
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      const images = Array.from(recordDetails.current?.querySelectorAll('img') ?? []);
+      await Promise.all(images.map(image => image.decode().catch(() => undefined)));
+      window.print();
+    });
+  }
   const [history, setHistory] = useState<Session[]>([]); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   async function run(operation: () => Promise<void>) { setBusy(true); setError(''); try { await operation(); } catch(e) { setError(e instanceof Error ? e.message : '保存失败'); } finally { setBusy(false); } }
   const last = session?.rounds.at(-1); const previous = session?.rounds.at(-2);
@@ -20,19 +30,19 @@ export default function ExperimentFlow({ session, onChange, onResume, onClose, e
   const declaration = session?.declarations.at(-1);
   const current = declaration && (declaration.measurementRevision??0)===(session?.measurementRevision??0) && declaration.roundIds.join(',') === session?.rounds.map(r => r.id).join(',');
   return <section className={embedded ? "experiment-dock experiment-page" : "flow-overlay"} role={embedded ? "region" : "dialog"} aria-modal={embedded ? undefined : true} aria-label="本次实验记录"><div className={embedded ? "experiment-dock-inner" : "flow-dialog experiment-page"}>
-    <header className="flow-dialog-header"><div><p className="dock-eyebrow">实验进程</p><h2>本次实验{session ? ` · ${session.rounds.length} 轮` : "记录"}</h2></div>{!embedded && <button type="button" onClick={onClose}>返回分析 ×</button>}</header>
-    <p className="dock-description">每次复测自动续记；在这里看变化、确认调整完成或展开详细记录。</p>
+    <header className="flow-dialog-header"><div><p className="dock-eyebrow">实验进程</p><h2>本次实验{session ? ` · ${session.rounds.length} 轮` : "记录"}</h2></div>{session && session.rounds.length > 0 && <button type="button" disabled={busy} onClick={outputRecord}>输出实验记录</button>}{!embedded && <button type="button" onClick={onClose}>返回分析 ×</button>}</header>
+    <p className="dock-description">完成一次分析即可查看和输出实验记录，不限制照片数量；复测会自动续记。</p>
     {notice && <p className="flow-save-note" role="status">{notice}</p>}
     {error && <p role="alert">{error}</p>}
     {session && <>
       {comparison && <p className="dock-comparison"><b>本轮对比：{comparison.label}</b> · 轴比 {summarize(previous!, 'ratio').toFixed(4)} → {summarize(last!, 'ratio').toFixed(4)}<br/><small>{comparison.detail}</small></p>}
       <RoundTrend rounds={session.rounds}/>
-      <section className="dock-completion"><div><h3>调整到满意后，再检验残余</h3><p>不限制复测轮数；缺少独立测量时会说明数据不足。</p></div><button disabled={busy} type="button" onClick={() => run(async () => onChange(await saveSession({ ...session, declarations: [...session.declarations, { id: newRecordId(), time: new Date().toISOString(), roundIds: session.rounds.map(r=>r.id), ruleVersion:'residual-screen-v1-unvalidated', measurementRevision:session.measurementRevision??0, result:inspectResidual(session.rounds) }] })))}>我已调整完毕，检验残余</button></section>
-      {declaration && <div className="dock-residual" role="status"><b>{current ? '当前检验' : '数据已更新，需重新确认'}</b><p>{declaration.result.message}</p>{current && declaration.result.status==='detected' && <button disabled={busy} type="button" onClick={() => run(async () => onChange(await saveSession({ ...session, restorations:[...session.restorations,restore(session)] })))}>评估残余补偿条件</button>}</div>}
+      <section className="dock-completion"><div><h3>调整到满意后，再检验残余</h3><p>残余检验为可选步骤；样本不足不影响实验记录输出。</p></div><button disabled={busy} type="button" onClick={() => run(async () => onChange(await saveSession({ ...session, declarations: [...session.declarations, { id: newRecordId(), time: new Date().toISOString(), roundIds: session.rounds.map(r=>r.id), ruleVersion:'residual-screen-v1-unvalidated', measurementRevision:session.measurementRevision??0, result:inspectResidual(session.rounds) }] })))}>我已调整完毕，检验残余</button></section>
+      {declaration && <div className="dock-residual" role="status"><b>{current ? '当前检验' : '数据已更新，需重新确认'}</b><p>{declaration.result.message}</p>{declaration.result.status === "insufficient" && <p>本次实验记录已保存，可以直接点击“输出实验记录”；补拍仅用于进一步检验残余。</p>}{current && declaration.result.status==='detected' && <button disabled={busy} type="button" onClick={() => run(async () => onChange(await saveSession({ ...session, restorations:[...session.restorations,restore(session)] })))}>评估残余补偿条件</button>}</div>}
       {session.restorations.map((r,i)=><p key={i}>{r.reason}</p>)}
     </>}
-    <details className="dock-details"><summary>{session ? `展开完整记录与参数 · ${session.rounds.length} 轮` : '查看历史实验'}</summary>
-    <div className="flow-tools"><button disabled={busy} type="button" onClick={() => run(async () => setHistory(await listSessions()))}>加载历史实验</button>{session && <><button disabled={busy} type="button" onClick={() => run(() => exportSession(session))}>导出本次实验</button><button type="button" onClick={() => window.print()}>打印实验记录</button></>}</div>
+    <details ref={recordDetails} className="dock-details"><summary>{session ? `展开完整记录与参数 · ${session.rounds.length} 轮` : '查看历史实验'}</summary>
+    <div className="flow-tools"><button disabled={busy} type="button" onClick={() => run(async () => setHistory(await listSessions()))}>加载历史实验</button>{session && <><button disabled={busy} type="button" onClick={() => run(() => exportSession(session))}>导出本次实验</button></>}</div>
     <p className="archive-help">实验自动保存在当前浏览器；需要备份时可导出记录。</p>
     {history.map(s => <button key={s.id} type="button" disabled={busy} onClick={() => onResume(s)}>{s.profile.name} · {s.rounds.length} 轮 · 继续实验</button>)}
     {!session && <p>完成首次圆环分析后，记录会自动出现在这里。</p>}
