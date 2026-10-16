@@ -42,7 +42,7 @@ export default function ExperimentFlow({ session, onChange, onResume, onClose, e
       {session.restorations.map((r,i)=><p key={i}>{r.reason}</p>)}
     </>}
     <details ref={recordDetails} className="dock-details"><summary>{session ? `展开完整记录与参数 · ${session.rounds.length} 轮` : '查看历史实验'}</summary>
-    <div className="flow-tools"><button disabled={busy} type="button" onClick={() => run(async () => setHistory(await listSessions()))}>加载历史实验</button>{session && <><button disabled={busy} type="button" onClick={() => run(() => exportSession(session))}>导出本次实验</button></>}</div>
+    <div className="flow-tools"><button disabled={busy} type="button" onClick={() => run(async () => setHistory((await listSessions()).filter(item=>item.profile.kind !== "simulation")))}>加载历史实验</button>{session && <><button disabled={busy} type="button" onClick={() => run(() => exportSession(session))}>导出本次实验</button></>}</div>
     <p className="archive-help">实验自动保存在当前浏览器；需要备份时可导出记录。</p>
     {history.map(s => <button key={s.id} type="button" disabled={busy} onClick={() => onResume(s)}>{s.profile.name} · {s.rounds.length} 轮 · 继续实验</button>)}
     {!session && <p>完成首次圆环分析后，记录会自动出现在这里。</p>}

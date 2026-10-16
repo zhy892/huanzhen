@@ -1,12 +1,10 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import type { Session, Round, Sample } from "../core/experiment";
 import { recommend } from "../core/experiment";
 import { saveSession, getSession } from "../lib/experiment-store";
 import { newRecordId, imageFingerprint } from "../core/recording";
 import ExperimentFlow from "../components/experiment-flow";
-const SimulationPanel = dynamic(() => import("../components/simulation-panel").then(m => m.SimulationPanel), { ssr: false });
 import { ChangeEvent, DragEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { CauseId, Mode, ImageMetrics, AiDiagnosis, FitPoint, ORDERS, STANDARD_RADIUS, CALIBRATION_STRENGTH, MAX_RECOMMENDED_CAUSES, CAUSES, DEMO_DATA, clamp, wait, fmt, builtinDiagnosis, buildAiSuggestions, fitEllipseFromPoints, inspectImage, axisProjectionFactor, calculationT } from "../core/analysis";
@@ -15,7 +13,6 @@ export default function Home() {
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const sessionRef = useRef<Session | null>(null);
   const [showRecords, setShowRecords] = useState(false);
-  const [showSimulation, setShowSimulation] = useState(false);
   const [roundAction, setRoundAction] = useState("");
   const [roundOperation, setRoundOperation] = useState("repeat");
   const [roundConfounds, setRoundConfounds] = useState("");
@@ -51,14 +48,13 @@ export default function Home() {
     const load=id ? getSession(id) : Promise.resolve(null);
     void load.then(saved=>{
       if(cancelled) return;
-      if(saved) receiveSession(saved);
+      if(saved && saved.profile.kind !== "simulation") receiveSession(saved);
       if(tool==="records") setShowRecords(true);
-      if(tool==="simulation") setShowSimulation(true);
     }).catch(()=>{ if(!cancelled) setRecordNotice("当前浏览器无法恢复实验记录，请检查存储权限。"); });
     return ()=>{cancelled=true;};
   }, []);
   useEffect(() => {
-    if (!showRecords && !showSimulation) return;
+    if (!showRecords) return;
     const previous = document.activeElement as HTMLElement | null;
     const oldOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -66,12 +62,12 @@ export default function Home() {
     const controls = () => Array.from(overlay?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]') ?? []).filter(e => e.getClientRects().length > 0);
     controls()[0]?.focus();
     const keyboard = (e: KeyboardEvent) => {
-      if(e.key === "Escape") { setShowRecords(false); setShowSimulation(false); }
+      if(e.key === "Escape") { setShowRecords(false); }
       if(e.key === "Tab") { const all=controls(); const first=all[0],last=all.at(-1); if(e.shiftKey && document.activeElement===first) {e.preventDefault();last?.focus();} else if(!e.shiftKey && document.activeElement===last) {e.preventDefault();first?.focus();} }
     };
     document.addEventListener("keydown",keyboard);
     return () => {document.body.style.overflow=oldOverflow; document.removeEventListener("keydown",keyboard);previous?.focus();};
-  }, [showRecords, showSimulation]);
+  }, [showRecords]);
   const fileInput = useRef<HTMLInputElement>(null);
   const previewCanvas = useRef<HTMLCanvasElement>(null);
 
@@ -387,13 +383,11 @@ export default function Home() {
           const { annotatedImage, ...observation }=result; void annotatedImage;
           samples.push({ id:newRecordId(), contentHash:hash, image:source, name:source.name, metrics:observation });
         }
-        const simulation=sources.every(f=>f.name.startsWith("simulation-"));
-        if(!simulation && sources.some(f=>f.name.startsWith("simulation-"))) throw new Error("请将仿真图片与实际实验照片分开分析。");
         const current=sessionRef.current;
-        const existing=current && (current.profile.kind ?? "experiment")===(simulation ? "simulation" : "experiment") ? current : null;
+        const existing=current && current.profile.kind !== "simulation" ? current : null;
         const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
         for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
-          const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:simulation ? "simulation" : "experiment", name:`${simulation ? "仿真演示" : "牛顿环实验"} ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
+          const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:"experiment", name:`牛顿环实验 ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
           const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v1",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
           const duplicates=samples.filter(s=>s.reused).length;
@@ -563,13 +557,12 @@ export default function Home() {
     return (
       <main className="landing">
 {showRecords && <ExperimentFlow session={activeSession} onChange={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));}} onResume={s=>{receiveSession(s);setShowRecords(false);setWavelength(String(s.profile.wavelengthNm));startRetest();}} onClose={()=>setShowRecords(false)}/>}
-      {showSimulation && <div className="flow-overlay" role="dialog" aria-modal="true" aria-label="环纹仿真"><div className="flow-dialog"><button className="quiet-button" type="button" onClick={()=>setShowSimulation(false)}>返回实验 ×</button><SimulationPanel onUse={f=>{updateFile(f);setBatchFiles([f]);setStep(1);setShowSimulation(false);}}/></div></div>}
         <header className="landing-nav">
           <button className="brand" type="button" onClick={()=>setStep(0)} aria-label="环真首页">
             <span className="brand-mark"><i /><i /><i /></span>
             <span>环真</span>
           </button>
-          <div className="flow-tools"><button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>实验记录</button><button className="quiet-button" type="button" onClick={()=>setShowSimulation(true)}>仿真试一试</button></div>
+          <div className="flow-tools"><button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>实验记录</button></div>
         </header>
 
         <section className="hero">
@@ -622,7 +615,6 @@ export default function Home() {
   return (
     <main className="app-shell">
 {showRecords && <ExperimentFlow session={activeSession} onChange={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));}} onResume={s=>{receiveSession(s);setShowRecords(false);setWavelength(String(s.profile.wavelengthNm));startRetest();}} onClose={()=>setShowRecords(false)}/>}
-      {showSimulation && <div className="flow-overlay" role="dialog" aria-modal="true" aria-label="环纹仿真"><div className="flow-dialog"><button className="quiet-button" type="button" onClick={()=>setShowSimulation(false)}>返回实验 ×</button><SimulationPanel onUse={f=>{updateFile(f);setBatchFiles([f]);setStep(1);setShowSimulation(false);}}/></div></div>}
       <header className="app-header">
         <button className="brand" type="button" onClick={()=>setStep(0)} aria-label="返回首页">
           <span className="brand-mark"><i /><i /><i /></span><span>环真</span>
@@ -634,7 +626,7 @@ export default function Home() {
             <span className={step >= 3 ? "active" : ""}><b>3</b> 数据</span>
           </div>
         )}
-        <div className="flow-tools">{step !== 2 && <button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>本次实验{activeSession ? ` · ${activeSession.rounds.length}轮` : "记录"}</button>}<button className="quiet-button" type="button" onClick={()=>setShowSimulation(true)}>仿真</button><button className="quiet-button" type="button" onClick={reset}>新实验</button></div>
+        <div className="flow-tools">{step !== 2 && <button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>本次实验{activeSession ? ` · ${activeSession.rounds.length}轮` : "记录"}</button>}<button className="quiet-button" type="button" onClick={reset}>新实验</button></div>
       </header>
 
       {step === 1 && (

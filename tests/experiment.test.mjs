@@ -65,17 +65,6 @@ test('restoration denies stale declarations, no residual, and missing calibratio
   assert.equal(restore(session).tier, 'unavailable');
 });
 
-test('simulator is deterministic, changes exposure noise with seed, and respects physical dark center', async () => {
-  const { simulateRing } = await import('../core/simulation.ts');
-  const o = { size: 64, radiusM: 1.4, wavelengthNm: 589.3, pixelsPerMm: 15, ratio: 1, noise: .05, seed: 1, offsetX: 0, gradient: 0 };
-  const a = simulateRing(o);
-  assert.deepEqual(a, simulateRing(o));
-  assert.notDeepEqual(a, simulateRing({ ...o, seed: 2 }));
-  const clean = simulateRing({ ...o, noise: 0 });
-  assert.equal(clean[(32 * 64 + 32) * 4], Math.round(.12 * 255));
-  assert.throws(() => simulateRing({ ...o, radiusM: 0 }));
-});
-
 test('shared manual ellipse fitting preserves known geometry', async () => {
   const { fitEllipseFromPoints } = await import('../core/analysis.ts');
   const angle = .4;

@@ -78,3 +78,10 @@ test("legacy iteration route returns to the unified workspace", async () => {
   assert.ok([301,302,303,307,308].includes(response.status));
   assert.match(response.headers.get("location"), /\/\?tool=records$/);
 });
+
+test("removed simulation feature has no homepage entry or route", async () => {
+  const home = await render();
+  assert.doesNotMatch(await home.text(), /仿真试一试|牛顿环仿真/);
+  const removed = await render("/simulation");
+  assert.equal(removed.status, 404);
+});
