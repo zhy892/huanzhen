@@ -1,3 +1,4 @@
+import { newRecordId } from '../core/recording';
 import type { Session } from '../core/experiment';
 const DB_NAME = 'huanzhen-experiments';
 function open(): Promise<IDBDatabase> {
@@ -78,7 +79,7 @@ export async function importSession(file: File): Promise<Session> {
     declaration.result = inspectResidual(data.rounds.filter(round => declaration.roundIds.includes(round.id)));
   }
   for (const restoration of data.restorations) if (typeof restoration.time !== 'string' || typeof restoration.reason !== 'string' || typeof restoration.declarationId !== 'string' || !['restored','bounded','unavailable'].includes(restoration.tier) || ['before','after','amount','uncertainty'].some(key => restoration[key as 'before'] !== undefined && !numeric(restoration[key as 'before']))) throw new Error('补偿记录格式错误。');
-  return { ...data, revision: 0, id: crypto.randomUUID(), created: new Date().toISOString(), profile: { ...data.profile, name: `${data.profile.name}（导入）` } };
+  return { ...data, revision: 0, id: newRecordId(), created: new Date().toISOString(), profile: { ...data.profile, name: `${data.profile.name}（导入）` } };
 }
 
 export async function getSession(id: string): Promise<Session | null> {

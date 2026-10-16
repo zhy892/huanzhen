@@ -96,3 +96,29 @@ test('edited readings invalidate a previous completion declaration', () => {
   const session={version:1,id:'s',created:'',measurementRevision:1,profile,rounds:[r],declarations:[{id:'d',time:'',roundIds:['a'],measurementRevision:0,result:inspectResidual([r])}],restorations:[]};
   assert.match(restore(session).reason,/缺少对应当前轮次/);
 });
+
+test('repeated uploads remain chartable rounds without counting as independent measurements', async () => {
+  const { independentSamples } = await import('../core/experiment.ts');
+  const a=round('a',[.95,.951,.949]);
+  const repeated=round('b',[.95,.951,.949]);
+  repeated.samples.forEach((sample,i)=>{sample.contentHash=a.samples[i].id;sample.reused=true;});
+  assert.equal([a,repeated].length,2);
+  assert.equal(independentSamples(repeated).length,0);
+  assert.equal(inspectResidual([a,repeated]).status,'insufficient');
+  assert.equal(compareRounds(a,repeated).label,'证据不足');
+  const sameBatch=round('c',[.95,.95,.95]);
+  sameBatch.samples.forEach(sample=>{sample.contentHash='same-image';});
+  assert.equal(independentSamples(sameBatch).length,1);
+});
+
+test('local recording supports browsers without secure-context crypto APIs', async () => {
+  const { imageFingerprint, newRecordId } = await import('../core/recording.ts');
+  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+  try {
+    Object.defineProperty(globalThis,'crypto',{value:{},configurable:true});
+    const a=await imageFingerprint(new Blob(['photo-a']));
+    assert.equal(a,await imageFingerprint(new Blob(['photo-a'])));
+    assert.notEqual(a,await imageFingerprint(new Blob(['photo-b'])));
+    assert.equal(new Set(Array.from({length:20},()=>newRecordId())).size,20);
+  } finally {if(descriptor)Object.defineProperty(globalThis,'crypto',descriptor);else delete globalThis.crypto;}
+});

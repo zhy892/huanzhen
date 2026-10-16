@@ -2,7 +2,7 @@ import { deviation, summarize } from '../core/experiment';
 import type { Round } from '../core/experiment';
 export default function RoundTrend({ rounds }: { rounds: Round[] }) {
   if (!rounds.length) return null;
-  return <section className="experiment-panel"><h2>迭代曲线</h2><p>各轮均值与重复测量标准差按保存顺序展示，误差线并非置信区间。变化不代表准确度提高；退步的轮次同样保留。</p>{(['ratio', 'clarity'] as const).map(key => {
+  return <section className="experiment-panel"><h2>迭代曲线</h2><p>每次分析都会增加一个轮次，包括重复图片与未改善的记录。曲线显示各轮图像指标，重复图片不计入独立测量检验；误差线为本轮样本标准差，并非置信区间。</p>{(['ratio', 'clarity'] as const).map(key => {
     const values = rounds.map(r => summarize(r, key));
     const spreads = rounds.map(r => { const sd = deviation(r.samples.map(s => s.metrics[key])); return Number.isFinite(sd) ? sd : 0; });
     const low = Math.max(0, Math.min(...values.map((v, i) => v - spreads[i])) - .01), high = Math.min(1, Math.max(...values.map((v, i) => v + spreads[i])) + .01);

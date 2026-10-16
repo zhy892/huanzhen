@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import type { Session, Round, Sample } from "../core/experiment";
 import { recommend, compareRounds, inspectResidual } from "../core/experiment";
 import { saveSession, getSession } from "../lib/experiment-store";
+import { newRecordId, imageFingerprint } from "../core/recording";
+import RoundTrend from "../components/round-trend";
 import ExperimentFlow from "../components/experiment-flow";
 const SimulationPanel = dynamic(() => import("../components/simulation-panel").then(m => m.SimulationPanel), { ssr: false });
 import { ChangeEvent, DragEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -346,23 +348,23 @@ export default function Home() {
     setDragging(false);
     const files=Array.from(event.dataTransfer.files);
     if(files.length>8) {setError("每轮最多选择8张照片。");return;}
-    if (files[0]) {updateFile(files[0]);setBatchFiles(files);}
+    if (files[0]) {updateFile(files[0]);setBatchFiles(files);if(retestMode) void analyze(files[0],files,true);}
   }
 
-  async function analyze() {
-    if (!file) {
+  async function analyze(chosenFile: File | null = file, chosenBatch: File[] = batchFiles, automatic = false) {
+    if (!chosenFile) {
       setError("请先上传第一级牛顿环照片。");
       return;
     }
-    if (manualFit && fitPoints.length < 5) {
+    if (!automatic && manualFit && fitPoints.length < 5) {
       setError("精准拟合至少需要沿同一条清晰圆环点击 5 个点；建议均匀点击 6–10 个点。");
       return;
     }
-    if (batchFiles.some(f=>!f.type.startsWith("image/") || f.size>12*1024*1024)) {setError("请上传每张不超过12 MB的图片。");return;}
+    if (chosenBatch.some(f=>!f.type.startsWith("image/") || f.size>12*1024*1024)) {setError("请上传每张不超过12 MB的图片。");return;}
     setError("");
     setThinking("analysis");
     try {
-      const measured = await inspectImage(file, manualFit ? fitPoints : []);
+      const measured = await inspectImage(chosenFile, !automatic && manualFit ? fitPoints : []);
       let nextDiagnosis = builtinDiagnosis(measured);
       if (mode === "deepseek") {
         const response = await fetch("/api/deepseek", {
@@ -378,27 +380,25 @@ export default function Home() {
       }
       try {
         const samples: Sample[] = [];
-        const sources = batchFiles.length ? batchFiles : [file];
+        const sources = chosenBatch.length ? chosenBatch : [chosenFile];
         for (let i=0; i<sources.length; i++) {
           const source=sources[i];
-          const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await source.arrayBuffer()))).map(v=>v.toString(16).padStart(2,"0")).join("");
+          const hash=await imageFingerprint(source);
           const result=i===0 ? measured : await inspectImage(source, [], false);
           const { annotatedImage, ...observation }=result; void annotatedImage;
-          samples.push({ id:hash, image:source, name:source.name, metrics:observation });
+          samples.push({ id:newRecordId(), contentHash:hash, image:source, name:source.name, metrics:observation });
         }
         const simulation=sources.every(f=>f.name.startsWith("simulation-"));
         if(!simulation && sources.some(f=>f.name.startsWith("simulation-"))) throw new Error("请将仿真图片与实际实验照片分开分析。");
         const current=sessionRef.current;
         const existing=current && (current.profile.kind ?? "experiment")===(simulation ? "simulation" : "experiment") ? current : null;
-        const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.id)) ?? []);
-        if(new Set(samples.map(s=>s.id)).size!==samples.length || samples.some(s=>known.has(s.id))) {
-          setRecordNotice("本次含重复照片，分析结果可查看，但未作为新的独立测量保存。重新拍摄后再复测。");
-        } else {
-          const base:Session=existing ?? { version:1, id:crypto.randomUUID(), created:new Date().toISOString(), profile:{ kind:simulation ? "simulation" : "experiment", name:`${simulation ? "仿真演示" : "牛顿环实验"} ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
-          const round:Round={ id:crypto.randomUUID(),time:new Date().toISOString(),algorithmVersion:"ring-v1",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "按上一轮建议调整后复测（未补充操作细节）" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+        const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
+        for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
+          const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:simulation ? "simulation" : "experiment", name:`${simulation ? "仿真演示" : "牛顿环实验"} ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
+          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v1",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "按上一轮建议调整后复测（未补充操作细节）" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
-          setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。`);
-        }
+          const duplicates=samples.filter(s=>s.reused).length;
+          setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。${duplicates ? `其中 ${duplicates} 张与已有照片重复，已保留曲线记录，但不计为新的独立测量。` : ""}`);
       } catch(e) { setRecordNotice(`分析已完成，记录未保存：${e instanceof Error ? e.message : "请检查浏览器存储"}`); }
       setMetrics(measured);
       setDiagnosis(nextDiagnosis);
@@ -429,7 +429,7 @@ export default function Home() {
     const session=sessionRef.current;
     if(!session) {setShowRecords(true);return;}
     try {
-      receiveSession(await saveSession({...session,declarations:[...session.declarations,{id:crypto.randomUUID(),time:new Date().toISOString(),roundIds:session.rounds.map(r=>r.id),measurementRevision:session.measurementRevision??0,result:inspectResidual(session.rounds)}]}));
+      receiveSession(await saveSession({...session,declarations:[...session.declarations,{id:newRecordId(),time:new Date().toISOString(),roundIds:session.rounds.map(r=>r.id),measurementRevision:session.measurementRevision??0,result:inspectResidual(session.rounds)}]}));
       setShowRecords(true);
     } catch(e) {setError(e instanceof Error ? e.message : "检验未保存");}
   }
@@ -656,7 +656,7 @@ export default function Home() {
 
           {retestMode && <details className="flow-adjustment"><summary>补充本轮调整（可选，未填写也会自动记录）</summary><label>操作类型<select value={roundOperation} onChange={e=>setRoundOperation(e.target.value)}><option value="view">观察方向</option><option value="focus">对焦与照明</option><option value="center">取景与读数轴</option><option value="repeat">同设置重复测量</option><option value="other">其他操作</option></select></label><label>实际调整<input value={roundAction} onChange={e=>setRoundAction(e.target.value)}/></label><label>拍摄或光照变化<input value={roundConfounds} onChange={e=>setRoundConfounds(e.target.value)}/></label></details>}
           {retestMode && (
-            <div className="retest-banner"><span>↻</span><div><b>仪器调整后的复测</b><p>按上一轮建议调整后直接上传新照片，无需重建实验。可以选择多张同设置照片，用于检查重复性。</p></div></div>
+            <div className="retest-banner"><span>↻</span><div><b>仪器调整后的复测</b><p>上传后自动分析并记录为下一轮，无需再次点击分析或重建实验。可以选择多张同设置照片，用于检查重复性。</p></div></div>
           )}
 
           <div className="upload-layout">
@@ -671,7 +671,7 @@ export default function Home() {
               onClick={() => !preview && fileInput.current?.click()}
               onKeyDown={(event) => { if (!preview && (event.key === "Enter" || event.key === " ")) fileInput.current?.click(); }}
             >
-              <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(event: ChangeEvent<HTMLInputElement>) => {const files=Array.from(event.target.files ?? []); if(files.length>8) {setError("每轮最多选择8张照片。");return;} if(files[0]) {updateFile(files[0]);setBatchFiles(files);}}} />
+              <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(event: ChangeEvent<HTMLInputElement>) => {const files=Array.from(event.target.files ?? []); if(files.length>8) {setError("每轮最多选择8张照片。");return;} if(files[0]) {updateFile(files[0]);setBatchFiles(files);event.target.value="";if(retestMode) void analyze(files[0],files,true);}}} />
               {preview ? (
                 <>
                   <canvas ref={previewCanvas} className={manualFit ? "pointing" : ""} onClick={addFitPoint} role="img" aria-label="待分析的牛顿环；精准拟合开启时可点击圆环取点" />
@@ -712,7 +712,7 @@ export default function Home() {
               )}
               <div className="tip-card"><b>连续环边追踪与椭圆拟合</b><p>邻域中值抑制十字刻线、屏幕边框、摩尔纹与孤立污点，再通过环心迭代和离群点剔除稳定拟合；轮廓不足时停止输出。</p></div>
               {error && <p className="error-message" role="alert">{error}</p>}
-              <button className="primary full-button" type="button" onClick={analyze} disabled={!file}>分析圆环 <span>→</span></button>
+              <button className="primary full-button" type="button" onClick={()=>void analyze()} disabled={!file || thinking!==null}>分析圆环 <span>→</span></button>
             </aside>
           </div>
         </section>
@@ -742,6 +742,7 @@ export default function Home() {
           </div>
 
           {recordNotice && <p className="flow-save-note" role="status">{recordNotice}{activeSession && activeSession.rounds.length>1 && <span> 本轮对比：{compareRounds(activeSession.rounds.at(-2)!,activeSession.rounds.at(-1)!).label}。</span>} <button type="button" onClick={()=>setShowRecords(true)}>查看记录与残余检验</button></p>}
+          {activeSession && <div className="inline-round-trend"><RoundTrend rounds={activeSession.rounds}/></div>}
           <div className="cause-section ai-advice-section">
             <div className="cause-heading ai-advice-heading">
               <div>
@@ -813,7 +814,7 @@ export default function Home() {
           ) : (
             <div className="action-bar">
               <div className="correction-summary"><span>当前综合修正系数</span><b>× {correction.total.toFixed(5)}</b><small>{selectedCauses.length ? `${selectedCauses.length} 项建议经现场复核后启用` : "正圆 / 不启用额外修正"}</small></div>
-              <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="secondary" type="button" onClick={finishAdjusting}>我已调整完毕，检验残余</button><button className="primary" type="button" onClick={goToData}>录入读数与报告 <span>→</span></button></div>
+              <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="secondary" type="button" onClick={finishAdjusting}>我已调整完毕，检验残余</button><button className="primary" type="button" onClick={goToData}>环真还原 <span>→</span></button></div>
             </div>
           )}
         </section>

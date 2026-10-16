@@ -9,7 +9,7 @@ export type Profile = {
   pixelPerMm: number | null; conditions: string; diameterFactor: number;
   factorUncertainty: number;
 };
-export type Sample = { id: string; image: Blob; metrics: Observation; name: string };
+export type Sample = { contentHash?: string; reused?: boolean; id: string; image: Blob; metrics: Observation; name: string };
 export type Round = {
   algorithmVersion?: string; id: string; time: string; action: string; operation: string; confounds: string;
   samples: Sample[]; readings: Reading[]; recommendation: Recommendation;
@@ -32,6 +32,14 @@ export function deviation(values: number[]) {
 function critical95(n: number) {
   const table = [NaN, NaN, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262];
   return n <= 10 ? table[n] : n <= 20 ? 2.262 : n <= 30 ? 2.093 : 2.045;
+}
+export function independentSamples(round: Round): Sample[] {
+  const seen = new Set<string>();
+  return round.samples.filter(sample => {
+    const key = sample.contentHash ?? sample.id;
+    if (sample.reused || seen.has(key)) return false;
+    seen.add(key); return true;
+  });
 }
 export function summarize(round: Round, key: keyof Observation) {
   return mean(round.samples.map(s => Number(s.metrics[key])));
@@ -62,10 +70,11 @@ export function recommend(samples: Array<{ metrics: Observation }>): Recommendat
 export function compareRounds(a: Round, b: Round) {
   if(b.operation === "unrecorded") return {label:"仅比较变化",detail:"本轮未补充具体操作，已保存指标变化；不自动把变化归因于建议操作。"};
   if (a.confounds || b.confounds) return { label: '条件变化，暂不归因', detail: '存在拍摄或设置变化；保留差异，但不将变化归因于单项调整。' };
-  if (a.samples.length < 3 || b.samples.length < 3 || [...a.samples, ...b.samples].some(s => s.metrics.damaged)) return { label: '证据不足', detail: '每轮至少需要 3 次有效重复测量。此数量是初始采集要求，并非精度保证。' };
+  const aSamples=independentSamples(a), bSamples=independentSamples(b);
+  if (aSamples.length < 3 || bSamples.length < 3 || [...aSamples, ...bSamples].some(s => s.metrics.damaged)) return { label: '证据不足', detail: '每轮至少需要 3 次独立有效测量；重复图片会保留记录，但不作为独立测量。此数量是初始采集要求，并非精度保证。' };
   if (b.operation !== a.recommendation.id) return { label: '操作不匹配', detail: '本轮未验证上一轮推荐的操作，不能判断该假设是否得到支持。' };
   const key = a.recommendation.metric;
-  const av = a.samples.map(s => s.metrics[key]); const bv = b.samples.map(s => s.metrics[key]);
+  const av = aSamples.map(s => s.metrics[key]); const bv = bSamples.map(s => s.metrics[key]);
   const delta = (mean(bv) - mean(av)) * a.recommendation.direction;
   const se = Math.sqrt(deviation(av) ** 2 / av.length + deviation(bv) ** 2 / bv.length);
   // Use the smaller sample size for a conservative screening bound.
@@ -77,14 +86,15 @@ export function compareRounds(a: Round, b: Round) {
 export function inspectResidual(rounds: Round[]): Residual {
   const last = rounds.at(-1);
   const base = { historyCount: rounds.length };
-  if (!last || last.samples.length < 3 || last.samples.some(s => s.metrics.damaged)) return { ...base, status: 'insufficient', message: '最近一轮需要至少 3 张质量合格的独立照片。' };
-  const q = last.samples.map(s => s.metrics.ratio);
+  const samples=last ? independentSamples(last) : [];
+  if (!last || samples.length < 3 || samples.some(s => s.metrics.damaged)) return { ...base, status: 'insufficient', message: '最近一轮需要至少 3 张质量合格的独立照片。各次上传均已记录，重复图片不计入独立测量。' };
+  const q = samples.map(s => s.metrics.ratio);
   const sd = deviation(q); const residual = 1 - mean(q);
   if (!Number.isFinite(sd) || sd <= 1e-8) return { ...base, status: 'insufficient', message: '重复数据没有可估计的波动。请独立重新拍摄；不能以零波动证明无误差。' };
   const uncertainty = critical95(q.length) * sd / Math.sqrt(q.length);
   const validChanges: number[] = [];
   for (let i = 1; i < rounds.length; i++) {
-    const a = rounds[i - 1], b = rounds[i];
+    const a = {...rounds[i - 1],samples:independentSamples(rounds[i - 1])}, b = {...rounds[i],samples:independentSamples(rounds[i])};
     if (a.confounds || b.confounds || b.operation !== 'view' || a.samples.length < 3 || b.samples.length < 3 || [...a.samples, ...b.samples].some(s => s.metrics.damaged)) continue;
     const change = Math.abs(summarize(a, 'ratio') - summarize(b, 'ratio'));
     const noise = critical95(Math.min(a.samples.length, b.samples.length)) * Math.sqrt(deviation(a.samples.map(s => s.metrics.ratio)) ** 2 / a.samples.length + deviation(b.samples.map(s => s.metrics.ratio)) ** 2 / b.samples.length);

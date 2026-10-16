@@ -626,3 +626,6 @@ tr th:last-child, tr td:last-child { border-right: 0; }
 @media(max-width:650px) { .app-header {height:auto;min-height:76px;padding-top:10px;padding-bottom:10px;gap:10px;}.app-header .stepper {order:3;width:100%;justify-content:center;} }
 .diagnosis-actions .secondary:not(.retest-action) { color:var(--ink); background:#fff; }
 @media(max-width:650px) { .app-header .stepper {position:static;left:auto;transform:none;flex-basis:100%;}.app-header .flow-tools {margin-left:auto;} }
+.inline-round-trend .experiment-panel {margin:16px 0;background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;}
+.inline-round-trend h2 {font-size:22px;}.inline-round-trend p,.inline-round-trend figcaption {font-size:12px;color:var(--muted);}
+.inline-round-trend svg {display:block;width:100%;max-height:180px;}
