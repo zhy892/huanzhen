@@ -641,3 +641,6 @@ tr th:last-child, tr td:last-child { border-right: 0; }
 
 .experiment-dock {scroll-margin-top:90px;}
 @media(max-width:650px) {.experiment-dock {scroll-margin-top:145px;}}
+.flow-adjustment h3 {margin:0 0 6px;font-size:17px;}.flow-adjustment h3 small {font-size:12px;font-weight:400;color:var(--muted);}.flow-adjustment p {font-size:12px;color:var(--muted);margin:0 0 12px;}
+.round-operation-edit > summary {cursor:pointer;color:var(--green-dark);font-size:13px;padding:8px 0;}
+@media print {.round-operation-edit {display:none!important;}}

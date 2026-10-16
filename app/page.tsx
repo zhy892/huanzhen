@@ -394,7 +394,7 @@ export default function Home() {
         const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
         for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
           const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:simulation ? "simulation" : "experiment", name:`${simulation ? "仿真演示" : "牛顿环实验"} ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
-          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v1",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "按上一轮建议调整后复测（未补充操作细节）" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v1",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
           const duplicates=samples.filter(s=>s.reused).length;
           setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。${duplicates ? `其中 ${duplicates} 张与已有照片重复，已保留曲线记录，但不计为新的独立测量。` : ""}`);
@@ -644,7 +644,7 @@ export default function Home() {
             <div><p>图像输入</p><h2>上传第一级圆环</h2><span>尽量裁剪到只保留完整圆环，画面越正、边缘越清晰，判断越稳定。</span></div>
           </div>
 
-          {retestMode && <details className="flow-adjustment"><summary>补充本轮调整（可选，未填写也会自动记录）</summary><label>操作类型<select value={roundOperation} onChange={e=>setRoundOperation(e.target.value)}><option value="view">观察方向</option><option value="focus">对焦与照明</option><option value="center">取景与读数轴</option><option value="repeat">同设置重复测量</option><option value="other">其他操作</option></select></label><label>实际调整<input value={roundAction} onChange={e=>setRoundAction(e.target.value)}/></label><label>拍摄或光照变化<input value={roundConfounds} onChange={e=>setRoundConfounds(e.target.value)}/></label></details>}
+          {retestMode && <section className="flow-adjustment" aria-label="本轮调整记录"><h3>这次做了什么调整？<small>（选填）</small></h3><p>需要记录时，请先填写，再选择照片；上传后会和本轮结果一起保存。</p><label>操作类型<select value={roundOperation} onChange={e=>setRoundOperation(e.target.value)}><option value="view">观察方向</option><option value="focus">对焦与照明</option><option value="center">取景与读数轴</option><option value="repeat">同设置重复测量</option><option value="other">其他操作</option></select></label><label>实际调整<input placeholder="例如：重新对焦，保持相机位置不变" value={roundAction} onChange={e=>setRoundAction(e.target.value)}/></label><label>拍摄或光照变化<input value={roundConfounds} onChange={e=>setRoundConfounds(e.target.value)}/></label></section>}
           {retestMode && (
             <div className="retest-banner"><span>↻</span><div><b>仪器调整后的复测</b><p>上传后自动分析并记录为下一轮，无需再次点击分析或重建实验。可以选择多张同设置照片，用于检查重复性。</p></div></div>
           )}
