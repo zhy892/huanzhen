@@ -2,10 +2,9 @@
 
 import dynamic from "next/dynamic";
 import type { Session, Round, Sample } from "../core/experiment";
-import { recommend, compareRounds, inspectResidual } from "../core/experiment";
+import { recommend } from "../core/experiment";
 import { saveSession, getSession } from "../lib/experiment-store";
 import { newRecordId, imageFingerprint } from "../core/recording";
-import RoundTrend from "../components/round-trend";
 import ExperimentFlow from "../components/experiment-flow";
 const SimulationPanel = dynamic(() => import("../components/simulation-panel").then(m => m.SimulationPanel), { ssr: false });
 import { ChangeEvent, DragEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -425,15 +424,6 @@ export default function Home() {
     });
   }
 
-  async function finishAdjusting() {
-    const session=sessionRef.current;
-    if(!session) {setShowRecords(true);return;}
-    try {
-      receiveSession(await saveSession({...session,declarations:[...session.declarations,{id:newRecordId(),time:new Date().toISOString(),roundIds:session.rounds.map(r=>r.id),measurementRevision:session.measurementRevision??0,result:inspectResidual(session.rounds)}]}));
-      setShowRecords(true);
-    } catch(e) {setError(e instanceof Error ? e.message : "检验未保存");}
-  }
-
   async function goToData() {
     if (selectedCauses.includes("damage")) return;
     setThinking("restore");
@@ -644,7 +634,7 @@ export default function Home() {
             <span className={step >= 3 ? "active" : ""}><b>3</b> 数据</span>
           </div>
         )}
-        <div className="flow-tools"><button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>本次实验{activeSession ? ` · ${activeSession.rounds.length}轮` : "记录"}</button><button className="quiet-button" type="button" onClick={()=>setShowSimulation(true)}>仿真</button><button className="quiet-button" type="button" onClick={reset}>新实验</button></div>
+        <div className="flow-tools">{step !== 2 && <button className="quiet-button" type="button" onClick={()=>setShowRecords(true)}>本次实验{activeSession ? ` · ${activeSession.rounds.length}轮` : "记录"}</button>}<button className="quiet-button" type="button" onClick={()=>setShowSimulation(true)}>仿真</button><button className="quiet-button" type="button" onClick={reset}>新实验</button></div>
       </header>
 
       {step === 1 && (
@@ -741,8 +731,6 @@ export default function Home() {
             </div>
           </div>
 
-          {recordNotice && <p className="flow-save-note" role="status">{recordNotice}{activeSession && activeSession.rounds.length>1 && <span> 本轮对比：{compareRounds(activeSession.rounds.at(-2)!,activeSession.rounds.at(-1)!).label}。</span>} <button type="button" onClick={()=>setShowRecords(true)}>查看记录与残余检验</button></p>}
-          {activeSession && <div className="inline-round-trend"><RoundTrend rounds={activeSession.rounds}/></div>}
           <div className="cause-section ai-advice-section">
             <div className="cause-heading ai-advice-heading">
               <div>
@@ -809,12 +797,14 @@ export default function Home() {
             </div>
           )}
 
+          {activeSession ? <ExperimentFlow embedded notice={recordNotice} session={activeSession} onChange={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));}} onResume={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));startRetest();}} onClose={()=>{}}/> : recordNotice && <p className="flow-save-note" role="status">{recordNotice}</p>}
+
           {selectedCauses.includes("damage") ? (
             <div className="stop-card"><span>!</span><div><b>已停止经验还原</b><p>明显损坏会破坏模型前提，继续计算只会产生“看起来精确”的错误结果。请先更换/检修仪器并重新拍摄。</p></div><button type="button" onClick={startRetest}>按建议调整并重新上传</button></div>
           ) : (
             <div className="action-bar">
               <div className="correction-summary"><span>当前综合修正系数</span><b>× {correction.total.toFixed(5)}</b><small>{selectedCauses.length ? `${selectedCauses.length} 项建议经现场复核后启用` : "正圆 / 不启用额外修正"}</small></div>
-              <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="secondary" type="button" onClick={finishAdjusting}>我已调整完毕，检验残余</button><button className="primary" type="button" onClick={goToData}>环真还原 <span>→</span></button></div>
+              <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="primary" type="button" onClick={goToData}>环真还原 <span>→</span></button></div>
             </div>
           )}
         </section>

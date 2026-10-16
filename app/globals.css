@@ -626,6 +626,18 @@ tr th:last-child, tr td:last-child { border-right: 0; }
 @media(max-width:650px) { .app-header {height:auto;min-height:76px;padding-top:10px;padding-bottom:10px;gap:10px;}.app-header .stepper {order:3;width:100%;justify-content:center;} }
 .diagnosis-actions .secondary:not(.retest-action) { color:var(--ink); background:#fff; }
 @media(max-width:650px) { .app-header .stepper {position:static;left:auto;transform:none;flex-basis:100%;}.app-header .flow-tools {margin-left:auto;} }
-.inline-round-trend .experiment-panel {margin:16px 0;background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;}
-.inline-round-trend h2 {font-size:22px;}.inline-round-trend p,.inline-round-trend figcaption {font-size:12px;color:var(--muted);}
-.inline-round-trend svg {display:block;width:100%;max-height:180px;}
+.experiment-dock.experiment-page {max-width:none;margin:20px 0;padding:24px;background:#fff;border:1px solid var(--line);border-radius:20px;}
+.experiment-dock .dock-eyebrow {margin:0 0 4px;color:var(--green);font-size:10px;font-weight:750;letter-spacing:.15em;}
+.experiment-dock h2 {margin:0;font-size:25px;}.dock-description {color:var(--muted);font-size:12px;}
+.experiment-dock .flow-save-note {padding:10px 14px;margin:12px 0;font-size:12px;}
+.dock-comparison {font-size:13px;}.dock-comparison small {color:var(--muted);}
+.experiment-dock .experiment-panel {padding:18px;margin-top:16px;box-shadow:none;}
+.experiment-dock figure svg {display:block;width:100%;max-height:165px;}
+.dock-completion {display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 0;}.dock-completion h3 {margin:0;font-size:16px;}.dock-completion p {margin:4px 0;font-size:12px;color:var(--muted);}.dock-completion button {flex-shrink:0;}
+.dock-residual {padding:14px 18px;border-left:3px solid var(--green);background:var(--green-soft);border-radius:6px;font-size:13px;}
+.dock-details {margin-top:12px;border-top:1px solid var(--line);padding-top:16px;}.dock-details > summary {cursor:pointer;color:var(--green-dark);font-size:13px;font-weight:700;padding:8px 0;}.dock-details .flow-tools {margin-top:15px;}
+@media(max-width:650px) {.experiment-dock.experiment-page {padding:16px;}.dock-completion {align-items:stretch;flex-direction:column;}}
+@media print {body:has(.experiment-dock) .diagnosis-workspace > :not(.experiment-dock) {display:none!important;}.experiment-dock.experiment-page {border:0;margin:0;padding:0;}.dock-completion button {display:none!important;}}
+
+.experiment-dock {scroll-margin-top:90px;}
+@media(max-width:650px) {.experiment-dock {scroll-margin-top:145px;}}
