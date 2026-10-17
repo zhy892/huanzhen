@@ -1,5 +1,7 @@
-import { angularSupport, bilinear, darkCandidates, traceDarkRing } from "./ring-tracking.ts";
+import { angularSupport, darkCandidates, traceDarkRing } from "./ring-tracking.ts";
 import { fitRobustEllipse, initializeEllipse } from "./ellipse.ts";
+import { selectAutomaticRings } from "./auto-rings.ts";
+import type { RingSelection } from "./auto-rings.ts";
 import { assessFit } from "./fit-quality.ts";
 import type { FitStatus } from "./fit-quality.ts";
 import type { Ellipse } from "./ellipse.ts";
@@ -16,7 +18,7 @@ export type ImageMetrics = {
   confidence: number;
   damaged: boolean;
   annotatedImage: string;
-  fitMethod: "auto" | "manual";
+  fitMethod: "auto";
   detectedScreen: boolean;
   ellipse?: EllipseFit & { imageWidth:number; imageHeight:number };
   contourPoints?: Array<FitPoint & { inlier:boolean }>;
@@ -27,7 +29,8 @@ export type ImageMetrics = {
   fitObservedFraction?: number;
   fitStatus?: FitStatus;
   fitWarnings?: string[];
-  contourKind?: "dark-centerline" | "manual-points";
+  contourKind?: "dark-centerline";
+  ringSelection?: RingSelection;
 };
 
 export type AiDiagnosis = {
@@ -62,16 +65,16 @@ export const CAUSES: Array<{
     short: "投影压缩",
     description: "环像沿倾斜方向被压缩，通常表现为轮廓完整、长短轴稳定的椭圆。",
     advice: "微调反射镜、显微镜或相机姿态，使观察光轴尽量垂直于牛顿环平面，并让十字线穿过环心。",
-    formula: "D₀ = Dₓ · √(cos²φ + sin²φ / q²)",
+    formula: "q = b/a；原因未独立验证时不作投影补偿",
   },
   {
     id: "pressure",
     index: "02",
     title: "透镜受力不均",
     short: "接触形变",
-    description: "压紧螺钉或接触面倾斜造成非均匀空气膜，环宽与亮度常有方向差异。",
-    advice: "均匀、少量地调节压紧螺钉；清洁透镜与平板接触面后重新放置，避免单侧过紧。",
-    formula: "D₀ = √(ab)（等面积直径）",
+    description: "多环形状差异可能与局部形变有关，也可能来自污斑、遮挡或成像畸变，需现场复核。",
+    advice: "先保持设置复拍，排除污斑与反光；涉及接触面或受力调整时按仪器说明或教师指导操作。",
+    formula: "多环形状对比；不以等面积圆代替真实环径",
   },
   {
     id: "decenter",
@@ -80,7 +83,7 @@ export const CAUSES: Array<{
     short: "弦长误差",
     description: "测量线没有穿过真实环心，读到的是弦长而非直径，可用偏心量补偿。",
     advice: "移动镜组或读数显微镜，使环心与十字线交点重合；重新确认水平测量线穿过真实环心。",
-    formula: "D₀ = √(D² + 4e²)",
+    formula: "实际偏心量 e 未独立测量时不作弦长补偿",
   },
   {
     id: "calibration",
@@ -136,18 +139,19 @@ export function builtinDiagnosis(metrics: ImageMetrics): AiDiagnosis {
   }
 
   const causes: CauseId[] = [];
-  if (metrics.ratio < 0.975) causes.push(metrics.asymmetry > 0.34 ? "pressure" : "tilt");
-  if (metrics.ratio < 0.93 && metrics.asymmetry > 0.2 && !causes.includes("pressure")) causes.push("pressure");
-  if (metrics.centerOffset > 0.1) causes.push("decenter");
-  if (metrics.ratio < 0.94 && Math.abs(metrics.angle) < 12) causes.push("calibration");
-  if (!causes.length && metrics.ratio < 0.99) causes.push("tilt");
+  if(metrics.ringSelection?.consistency === "inconsistent") {
+    return {verdict:"各环形状不一致",summary:"不同可见暗环的轴比或圆心差异较大。局部形变、遮挡及成像畸变均有可能，暂不采用统一形状解释，更不能统一补偿所有直径。",causes:["pressure"],confidence:metrics.confidence,provider:"empirical"};
+  }
+  if(metrics.ratio<.99) causes.push("tilt","calibration");
+  const verdict=metrics.ratio>=.975?"可见环接近正圆":metrics.ratio>=.92?"轻微椭圆":"明显椭圆";
+  return {verdict,summary:`当前可见暗环短长轴比 ${metrics.ratio.toFixed(3)}。倾斜、透视与横纵比例失真可能产生相似形状；仅凭照片不能唯一归因。中心接触状态、绝对级次与真实读数偏心未评估。`,causes,confidence:metrics.confidence,provider:"empirical"};
+}
 
-  const isCircle = metrics.ratio >= 0.975;
-  const verdict = isCircle ? "可视为正圆" : metrics.ratio >= 0.92 ? "轻微椭圆" : "明显椭圆";
-  const summary = isCircle
-    ? "长短轴差异处于常见拍摄与边缘提取波动内，可直接进入数据计算；如需更严格处理，也可保留建议原因进行微量补偿。"
-    : `检测到长短轴比为 ${metrics.ratio.toFixed(3)}，偏离正圆。系统已按轮廓方向、偏心与明暗对称性给出可复核的原因建议。`;
-  return { verdict, summary, causes, confidence: metrics.confidence, provider: "empirical" };
+export function constrainDiagnosis(metrics:ImageMetrics, diagnosis:AiDiagnosis):AiDiagnosis {
+  const local=builtinDiagnosis(metrics);
+  if(metrics.damaged || metrics.ringSelection?.consistency === "inconsistent")return local;
+  const scope="仅评估可见暗环形状；中心接触状态和真实读数偏心未评估，不据此补偿直径。";
+  return {...diagnosis,verdict:local.verdict,causes:diagnosis.causes.filter(id=>local.causes.includes(id)),confidence:Math.min(diagnosis.confidence,metrics.confidence),summary:local.summary+" "+scope};
 }
 
 export function buildAiSuggestions(metrics: ImageMetrics, diagnosis: AiDiagnosis) {
@@ -159,8 +163,9 @@ export function buildAiSuggestions(metrics: ImageMetrics, diagnosis: AiDiagnosis
     calibration: 8 + (1 - metrics.ratio) * 110 + (Math.abs(metrics.angle) < 12 ? 10 : 3) + modelBoost("calibration"),
     damage: 3 + (1 - metrics.fitQuality) * 65 + (1 - metrics.clarity) * 28 + (metrics.damaged ? 45 : 0) + modelBoost("damage"),
   };
-  const totalScore = CAUSES.reduce((sum, cause) => sum + Math.max(0.01, rawScores[cause.id]), 0);
-  const shares = CAUSES.map((cause, index) => {
+  const eligible = metrics.damaged ? [] : CAUSES.filter(c=>builtinDiagnosis(metrics).causes.includes(c.id));
+  const totalScore = eligible.reduce((sum, cause) => sum + Math.max(0.01, rawScores[cause.id]), 0);
+  const shares = eligible.map((cause, index) => {
     const exact = (Math.max(0.01, rawScores[cause.id]) / totalScore) * 100;
     return { cause, index, exact, probability: Math.floor(exact) };
   });
@@ -184,10 +189,6 @@ export function buildAiSuggestions(metrics: ImageMetrics, diagnosis: AiDiagnosis
         .map((item) => item.id),
   );
   return ranked.map((item) => ({ ...item, recommended: recommendedIds.has(item.id) }));
-}
-
-export function fitEllipseFromPoints(points: FitPoint[], width: number, height: number): EllipseFit | null {
-  return fitRobustEllipse(points.map(p=>({x:p.x*width,y:p.y*height})),width,height)?.fit ?? null;
 }
 
 function longestRun(input: boolean[]) {
@@ -256,29 +257,6 @@ function median(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-function robustGradientSample(
-  gradient: Float32Array,
-  width: number,
-  height: number,
-  x: number,
-  y: number,
-  cosine: number,
-  sine: number,
-) {
-  const tangentialSamples: number[] = [];
-  for (const tangentOffset of [-4, -2, 0, 2, 4]) {
-    let localMaximum = 0;
-    for (const radialOffset of [-1, 0, 1]) {
-      const sampleX = x + cosine * radialOffset - sine * tangentOffset;
-      const sampleY = y + sine * radialOffset + cosine * tangentOffset;
-      if (sampleX <= 1 || sampleX >= width - 2 || sampleY <= 1 || sampleY >= height - 2) continue;
-      localMaximum = Math.max(localMaximum, bilinear(gradient,width,height,sampleX,sampleY));
-    }
-    tangentialSamples.push(localMaximum);
-  }
-  return median(tangentialSamples);
 }
 
 function robustEllipseFromRing(points: RingCandidate[], width: number, height: number) {
@@ -367,7 +345,7 @@ function refineSourceRing(image: HTMLImageElement, fit: EllipseFit, width: numbe
   return points.length>=144?points:null;
 }
 
-export async function inspectImage(file: File, manualPoints: FitPoint[] = [], annotate = true, targetPoint?: FitPoint): Promise<ImageMetrics> {
+export async function inspectImage(file: File, annotate = true): Promise<ImageMetrics> {
   const started=performance.now();
   const url = URL.createObjectURL(file);
   try {
@@ -438,7 +416,7 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
     let guideCenterX = (x0 + x1) / 2;
     let guideCenterY = (y0 + y1) / 2;
     const guideMask:{x?:number;y?:number}={};
-    if (manualPoints.length < 5) {
+    {
       const verticalGuide = detectGuideLine(gray, width, height, { x0, x1, y0, y1 }, "vertical");
       const horizontalGuide = detectGuideLine(gray, width, height, { x0, x1, y0, y1 }, "horizontal");
       if (verticalGuide.strength > 10 && verticalGuide.support>.55) {guideCenterX=verticalGuide.coordinate;guideMask.x=verticalGuide.coordinate;}
@@ -465,22 +443,11 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
     const q65 = gradientSamples[Math.floor(gradientSamples.length * 0.65)] || 0;
     const q76 = gradientSamples[Math.floor(gradientSamples.length * 0.76)] || q65;
     const q92 = Math.max(1, gradientSamples[Math.floor(gradientSamples.length * 0.92)] || 1);
-    const manualResult=manualPoints.length>=5?fitRobustEllipse(manualPoints.map(p=>({x:p.x*width,y:p.y*height})),width,height):null;
-    if(manualPoints.length>=5 && (!manualResult || manualResult.coverage<.55)) throw new Error("取点覆盖不足或不构成可靠椭圆，请沿同一暗环均匀取点，覆盖至少三个象限。");
-    const target=targetPoint?{x:targetPoint.x*width,y:targetPoint.y*height}:undefined;
-    let tracked:RingCandidate[] | null = manualResult ? manualPoints.map(p=>({x:p.x*width,y:p.y*height,radius:Math.hypot(p.x*width-manualResult.fit.centerX,p.y*height-manualResult.fit.centerY),magnitude:robustGradientSample(gradient,width,height,p.x*width,p.y*height,1,0),maxRadius:Math.max(width,height)})) : traceContinuousRing(
-      blurred,
-      width,
-      height,
-      { x0, x1, y0, y1 },
-      { x: guideCenterX, y: guideCenterY },
-      q92, target, undefined, guideMask,
-    );
-    if(!tracked && manualResult) tracked=manualPoints.map(p=>({x:p.x*width,y:p.y*height,radius:Math.hypot(p.x*width-manualResult.fit.centerX,p.y*height-manualResult.fit.centerY),magnitude:robustGradientSample(gradient,width,height,p.x*width,p.y*height,1,0),maxRadius:Math.max(width,height)}));
-    if (!tracked) throw new Error("没有找到可靠的同一条暗环，请点选目标暗环、重新裁剪或使用手动取点。");
-
-    let robustAutoFit = manualResult ? null : robustEllipseFromRing(tracked, width, height);
-    if (robustAutoFit && manualPoints.length < 5) {
+    const automatic=selectAutomaticRings(blurred,width,height,{x0,x1,y0,y1},{x:guideCenterX,y:guideCenterY},q92,guideMask);
+    if(!automatic) throw new Error("未找到足够清晰的暗环。请保持拍摄方向，改善对焦或取景后重拍；无需让中心暗斑完整出现。");
+    let tracked:RingCandidate[]=automatic.selected.points;
+    let robustAutoFit=robustEllipseFromRing(tracked,width,height);
+    if (robustAutoFit) {
       for (let iteration = 0; iteration < 2; iteration += 1) {
         const retraced = traceContinuousRing(
           blurred,
@@ -488,7 +455,7 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
           height,
           { x0, x1, y0, y1 },
           { x: robustAutoFit.fit.centerX, y: robustAutoFit.fit.centerY },
-          q92, target, robustAutoFit.fit, guideMask,
+          q92, undefined, robustAutoFit.fit, guideMask,
         );
         if (!retraced) break;
         const refined = robustEllipseFromRing(retraced, width, height);
@@ -498,22 +465,22 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
       }
     }
 
-    if(robustAutoFit && !manualResult) {
+    if(robustAutoFit) {
       const finePoints=refineSourceRing(image,robustAutoFit.fit,width,height,guideMask);
       const fine=finePoints?robustEllipseFromRing(finePoints,width,height):null;
       if(fine && Math.abs(fine.fit.ratio-robustAutoFit.fit.ratio)<.06 && Math.hypot(fine.fit.centerX-robustAutoFit.fit.centerX,fine.fit.centerY-robustAutoFit.fit.centerY)<5 && Math.abs(fine.fit.semiMajor/robustAutoFit.fit.semiMajor-1)<.05 && fine.rms<=Math.max(1,robustAutoFit.rms*1.2)) {tracked=finePoints!;robustAutoFit=fine;}
     }
-    if(!robustAutoFit && !manualResult) throw new Error("轮廓无法通过椭圆一致性检查，请点选目标暗环或重新取点。");
-    const result=manualResult ?? {fit:robustAutoFit!.fit,rms:robustAutoFit!.rms,coverage:robustAutoFit!.coverage,inliers:robustAutoFit!.inliers};
+    if(!robustAutoFit) throw new Error("可见暗纹不足以支持可靠曲线，请改善对焦或取景后重拍。");
+    const result= {fit:robustAutoFit!.fit,rms:robustAutoFit!.rms,coverage:robustAutoFit!.coverage,inliers:robustAutoFit!.inliers};
     const {centerX,centerY,semiMajor,semiMinor,ratio,angle}=result.fit;
-    const fitMethod: "auto" | "manual" = manualResult?"manual":"auto";
+    const fitMethod = "auto" as const;
     const quadrants=[0,0,0,0];
     for(const point of tracked)quadrants[(point.x>=centerX?1:0)+(point.y>=centerY?2:0)]+=point.magnitude;
     const meanMagnitude=tracked.reduce((sum,p)=>sum+p.magnitude,0)/tracked.length;
     const contrastScore=clamp(meanMagnitude/Math.max(16,q92*1.5),0,1);
     const edgeCoverage=tracked.filter(p=>p.magnitude>=q76).length/tracked.length;
     const fitInlierFraction=result.inliers.length/tracked.length;
-    const fitObservedFraction=manualResult?result.coverage:angularSupport(result.inliers.map(i=>tracked![i]),result.fit);
+    const fitObservedFraction=angularSupport(result.inliers.map(i=>tracked![i]),result.fit);
     const assessment=assessFit({rms:result.rms,semiMinor,minDimension:Math.min(width,height),coverage:result.coverage,observedFraction:fitObservedFraction,inlierFraction:fitInlierFraction,contrast:contrastScore});
     const fitQuality=assessment.quality;
     const fitResidualPx=result.rms,fitCoverage=result.coverage;
@@ -561,15 +528,10 @@ export async function inspectImage(file: File, manualPoints: FitPoint[] = [], an
     context.restore();
     const annotatedImage = annotate ? canvas.toDataURL("image/jpeg", 0.9) : "";
 
-    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, fitStatus:assessment.status,fitWarnings:assessment.warnings,fitObservedFraction,ellipse:!showEllipse?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:manualResult?"manual-points":"dark-centerline" };
+    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, fitStatus:assessment.status,fitWarnings:assessment.warnings,fitObservedFraction,ellipse:!showEllipse?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:"dark-centerline",ringSelection:{...automatic.selection,scaleFraction:Math.sqrt(semiMajor*semiMinor)/Math.min(x1-x0,y1-y0)} };
   } finally {
     URL.revokeObjectURL(url);
   }
-}
-
-export function axisProjectionFactor(ratio: number, angleDegrees: number) {
-  const phi = (angleDegrees * Math.PI) / 180;
-  return Math.sqrt(Math.cos(phi) ** 2 + Math.sin(phi) ** 2 / ratio ** 2);
 }
 
 export function calculationT(n: number) {

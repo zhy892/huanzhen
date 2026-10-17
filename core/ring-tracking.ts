@@ -144,6 +144,7 @@ export function traceDarkRing(
   target?: Point,
   prediction?: Ellipse,
   guide?: { x?: number; y?: number },
+  candidatesOut?: RingPoint[][],
 ): RingPoint[] | null {
   const count = 240,
     size = Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0),
@@ -247,6 +248,7 @@ export function traceDarkRing(
       gradientScale,
       target,
       prediction,
+      candidatesOut,
     );
   if (missing > count * 0.22) return partial();
   // Missing directions carry no image evidence. Interpolated candidates only
@@ -341,6 +343,7 @@ export function traceDarkRing(
         continue;
       const residual = result.rms;
       if (residual > Math.max(2.5, result.fit.semiMinor * 0.025)) continue;
+      candidatesOut?.push(evidence);
       const closure = (path.at(-1)!.radius - path[0].radius) / jump;
       const score =
         (scores[end] - 2 * closure * closure) / count - 0.35 * residual;
@@ -361,6 +364,7 @@ export function traceDarkRing(
         gradientScale,
         target,
         prediction,
+        candidatesOut,
       );
 }
 
@@ -376,6 +380,7 @@ function tracePartialRing(
   gradientScale: number,
   target?: Point,
   prediction?: Ellipse,
+  candidatesOut?: RingPoint[][],
 ): RingPoint[] | null {
   const size = Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0);
   const tolerance = Math.max(4, size * 0.025);
@@ -538,6 +543,7 @@ function tracePartialRing(
     // as a well-observed ring just because their largest gap is small.
     if (angularSupport(evidence, result.fit) < 0.4) continue;
     if (result.rms > Math.max(2.5, result.fit.semiMinor * 0.025)) continue;
+    candidatesOut?.push(evidence);
     const support = evidence.length - result.rms * 5;
     if (support > bestSupport) {
       bestEvidence = evidence;

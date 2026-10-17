@@ -154,7 +154,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(22, 117, 90,
 .drop-zone:hover, .drop-zone.dragging { border-color: var(--green); background: #f1f8f4; transform: translateY(-2px); }
 .drop-zone.has-image { cursor: default; border-style: solid; background: #0b1511; }
 .drop-zone.has-image canvas { display: block; width: auto; height: auto; max-width: 100%; max-height: 580px; object-fit: contain; }
-.drop-zone.has-image canvas.pointing { cursor: crosshair; }
 .drop-copy { text-align: center; }
 .upload-icon { width: 62px; height: 62px; margin: 0 auto 20px; border-radius: 18px; display: grid; place-items: center; background: var(--green-soft); color: var(--green); font-size: 29px; }
 .drop-copy h3 { margin: 0 0 8px; font-size: 19px; }
@@ -187,19 +186,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(22, 117, 90,
 .managed-ai-note p { margin: 0; display: flex; flex-direction: column; gap: 2px; }
 .managed-ai-note b { color: #24448f; font-size: 10px; }
 .managed-ai-note small { color: #697dab; font-size: 8px; line-height: 1.45; }
-.fit-control { margin: 16px 0; padding: 14px; border: 1px solid #dce5e1; border-radius: 13px; background: #fbfcfc; }
-.fit-control.active { border-color: var(--green); background: #f2f9f6; }
-.fit-control > div:first-child { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 9px; }
-.fit-control > div:first-child > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--green-soft); color: var(--green); font-weight: 900; }
-.fit-control p { margin: 0; }
-.fit-control > div p { display: flex; flex-direction: column; gap: 2px; }
-.fit-control b { font-size: 10px; }
-.fit-control small { color: #87938e; font-size: 8px; }
-.fit-control button { border: 1px solid #cfdbd5; border-radius: 7px; background: white; padding: 7px 9px; color: var(--green); font-size: 9px; font-weight: 750; cursor: pointer; }
-.fit-control button:disabled { opacity: .4; cursor: not-allowed; }
-.fit-control .fit-instruction { margin: 12px 0 9px; padding-top: 10px; border-top: 1px solid #dbe7e1; color: #68756f; font-size: 9px; line-height: 1.6; }
-.fit-counter { display: flex; align-items: center; gap: 6px; }
-.fit-counter > span { margin-right: auto; color: var(--green); font: 800 9px ui-monospace, monospace; }
 .tip-card { margin: 21px 0; padding: 16px; background: #f6f8f7; border-radius: 13px; }
 .tip-card b { font-size: 11px; }
 .tip-card p { color: #7b8883; font-size: 10px; line-height: 1.7; margin: 6px 0 0; }

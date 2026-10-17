@@ -65,21 +65,6 @@ test('restoration denies stale declarations, no residual, and missing calibratio
   assert.equal(restore(session).tier, 'unavailable');
 });
 
-test('shared manual ellipse fitting preserves known geometry', async () => {
-  const { fitEllipseFromPoints } = await import('../core/analysis.ts');
-  const angle = .4;
-  const points = Array.from({ length: 40 }, (_, i) => {
-    const t = i / 40 * 2 * Math.PI;
-    return { x: (250 + 120 * Math.cos(t) * Math.cos(angle) - 84 * Math.sin(t) * Math.sin(angle)) / 512,
-      y: (240 + 120 * Math.cos(t) * Math.sin(angle) + 84 * Math.sin(t) * Math.cos(angle)) / 512 };
-  });
-  const fit = fitEllipseFromPoints(points, 512, 512);
-  assert.ok(fit);
-  assert.ok(Math.abs(fit.ratio - .7) < 1e-5);
-  assert.ok(Math.abs(fit.centerX - 250) < 1e-4);
-  assert.ok(Math.abs(fit.centerY - 240) < 1e-4);
-});
-
 test('edited readings invalidate a previous completion declaration', () => {
   const r=round('a',[.95,.951,.949]);
   const session={version:1,id:'s',created:'',measurementRevision:1,profile,rounds:[r],declarations:[{id:'d',time:'',roundIds:['a'],measurementRevision:0,result:inspectResidual([r])}],restorations:[]};
@@ -117,4 +102,26 @@ test('different fitting versions do not establish an intervention effect',()=>{
   const b=round('b',[.98,.981,.979],{algorithmVersion:'ring-v2'});
   assert.equal(compareRounds(a,b).label,'算法版本不同');
   assert.equal(compareRounds({...a,algorithmVersion:undefined},b).label,'算法版本不同');
+});
+
+test('unknown common order offset does not change regression curvature radius',()=>{
+  const p={wavelengthNm:589.3,resolutionMm:.001};
+  const data=[0,5,10,15,20].map(order=>({order,diameter:Math.sqrt(6+order*.0024)}));
+  const a=calculate(data,p),b=calculate(data.map(r=>({...r,order:r.order+23})),p);
+  assert.ok(a&&b);
+  assert.ok(Math.abs(a.radius-b.radius)<1e-12);
+  assert.notEqual(a.intercept,b.intercept);
+});
+test('automatic ring changes and inconsistent shapes are not interpreted as intervention effects',()=>{
+  const selection={absoluteOrder:null,candidateCount:2,checkedRingCount:2,consistency:'consistent',ratioSpread:.002,centerSpread:.002,scaleFraction:.3,centerRegionAssessed:false};
+  const a=round('a',[.94,.941,.939],{algorithmVersion:'ring-v4'}),b=round('b',[.98,.981,.979],{algorithmVersion:'ring-v4'});
+  for(const r of [a,b])r.samples.forEach(s=>{s.metrics.ringSelection={...selection};});
+  b.samples.forEach(s=>{s.metrics.ringSelection.scaleFraction=.45;});
+  assert.equal(compareRounds(a,b).label,'选环依据不足以归因');
+  b.samples[0].metrics.ringSelection.scaleFraction=.3;
+  assert.equal(inspectResidual([b]).status,'insufficient');
+  b.samples.forEach(s=>{s.metrics.ringSelection={...selection,consistency:'single'};});
+  assert.equal(inspectResidual([b]).status,'insufficient');
+  b.samples.forEach(s=>{s.metrics.ringSelection={...selection,consistency:'inconsistent'};});
+  assert.equal(inspectResidual([b]).status,'insufficient');
 });

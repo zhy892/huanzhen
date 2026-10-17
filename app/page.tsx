@@ -5,9 +5,9 @@ import { recommend } from "../core/experiment";
 import { saveSession, getSession } from "../lib/experiment-store";
 import { newRecordId, imageFingerprint } from "../core/recording";
 import ExperimentFlow from "../components/experiment-flow";
-import { ChangeEvent, DragEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { CauseId, Mode, ImageMetrics, AiDiagnosis, FitPoint, ORDERS, STANDARD_RADIUS, CALIBRATION_STRENGTH, MAX_RECOMMENDED_CAUSES, CAUSES, DEMO_DATA, clamp, wait, fmt, builtinDiagnosis, buildAiSuggestions, fitEllipseFromPoints, inspectImage, axisProjectionFactor, calculationT } from "../core/analysis";
+import { CauseId, Mode, ImageMetrics, AiDiagnosis, ORDERS, STANDARD_RADIUS, CALIBRATION_STRENGTH, MAX_RECOMMENDED_CAUSES, CAUSES, DEMO_DATA, clamp, wait, fmt, builtinDiagnosis, buildAiSuggestions, constrainDiagnosis, inspectImage, calculationT } from "../core/analysis";
 
 export default function Home() {
   const [activeSession, setActiveSession] = useState<Session | null>(null);
@@ -26,10 +26,6 @@ export default function Home() {
   const [metrics, setMetrics] = useState<ImageMetrics | null>(null);
   const [diagnosis, setDiagnosis] = useState<AiDiagnosis | null>(null);
   const [selectedCauses, setSelectedCauses] = useState<CauseId[]>([]);
-  const [selectingRing, setSelectingRing] = useState(false);
-  const [targetPoint, setTargetPoint] = useState<FitPoint | null>(null);
-  const [manualFit, setManualFit] = useState(false);
-  const [fitPoints, setFitPoints] = useState<FitPoint[]>([]);
   const [thinking, setThinking] = useState<"analysis" | "restore" | null>(null);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -74,7 +70,7 @@ export default function Home() {
   const previewCanvas = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    if (!preview || !previewCanvas.current) return;
+    if (step !== 1 || !preview || !previewCanvas.current) return;
     const canvas = previewCanvas.current;
     const context = canvas.getContext("2d");
     if (!context) return;
@@ -84,57 +80,14 @@ export default function Home() {
       canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
       canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      if(targetPoint) {
-        context.strokeStyle="#f2a43a";context.lineWidth=2;context.beginPath();context.arc(targetPoint.x*canvas.width,targetPoint.y*canvas.height,8,0,2*Math.PI);context.stroke();
-      }
-      if (!fitPoints.length) return;
-      const fit = fitEllipseFromPoints(fitPoints, canvas.width, canvas.height);
-      if (fit) {
-        context.save();
-        context.strokeStyle = "rgba(201, 239, 99, .95)";
-        context.lineWidth = Math.max(2, canvas.width / 450);
-        context.setLineDash([10, 7]);
-        context.beginPath();
-        context.ellipse(fit.centerX, fit.centerY, fit.semiMajor, fit.semiMinor, (fit.angle * Math.PI) / 180, 0, Math.PI * 2);
-        context.stroke();
-        context.restore();
-      }
-      fitPoints.forEach((point, index) => {
-        const x = point.x * canvas.width;
-        const y = point.y * canvas.height;
-        context.beginPath();
-        context.arc(x, y, Math.max(6, canvas.width / 150), 0, Math.PI * 2);
-        context.fillStyle = "#c9ef63";
-        context.fill();
-        context.fillStyle = "#15211e";
-        context.font = `800 ${Math.max(8, canvas.width / 130)}px system-ui`;
-        context.textAlign = "center";
-        context.textBaseline = "middle";
-        context.fillText(String(index + 1), x, y);
-      });
+
     };
     image.src = preview;
-  }, [preview, fitPoints, targetPoint]);
+  }, [preview, step]);
 
   const correction = useMemo(() => {
-    if (!metrics || metrics.damaged) return { total: 1, parts: [] as Array<{ name: string; factor: number; formula: string }> };
     const parts: Array<{ name: string; factor: number; formula: string }> = [];
-    const ellipseCount = Number(selectedCauses.includes("tilt")) + Number(selectedCauses.includes("pressure"));
-    const sharedRatio = ellipseCount > 1 ? metrics.ratio ** (1 / ellipseCount) : metrics.ratio;
-    if (selectedCauses.includes("tilt")) {
-      parts.push({ name: "倾斜投影", factor: axisProjectionFactor(sharedRatio, metrics.angle), formula: "√(cos²φ + sin²φ/q²)" });
-    }
-    if (selectedCauses.includes("pressure")) {
-      parts.push({
-        name: "受力等面积",
-        factor: Math.sqrt(sharedRatio) * axisProjectionFactor(sharedRatio, metrics.angle),
-        formula: "√q · √(cos²φ + sin²φ/q²)",
-      });
-    }
-    if (selectedCauses.includes("decenter")) {
-      parts.push({ name: "偏心弦长", factor: Math.sqrt(1 + metrics.centerOffset ** 2), formula: "√(1 + (2e/D)²)" });
-    }
-    if (autoCalibration || selectedCauses.includes("calibration")) {
+    if (autoCalibration || (Number.isFinite(Number(calibration)) && Number(calibration)>0 && Number(calibration)!==1)) {
       parts.push({
         name: autoCalibration ? "标准半径辅助标定" : "标尺标定",
         factor: clamp(Number(calibration) || 1, 0.5, 1.5),
@@ -142,7 +95,7 @@ export default function Home() {
       });
     }
     return { total: parts.reduce((total, part) => total * part.factor, 1), parts };
-  }, [metrics, selectedCauses, calibration, autoCalibration]);
+  }, [calibration, autoCalibration]);
 
   const diagnosticDetail = useMemo(() => {
     if (!metrics || !diagnosis) return null;
@@ -157,9 +110,9 @@ export default function Home() {
           ? `长轴向右下倾斜 ${absoluteAngle.toFixed(1)}°`
           : `长轴向右上倾斜 ${absoluteAngle.toFixed(1)}°`;
     const causeEvidence: Record<CauseId, string> = {
-      tilt: `q = ${metrics.ratio.toFixed(3)}，${orientation}；${metrics.asymmetry < 0.34 ? "四象限响应较均匀，更接近投影压缩" : "同时存在方向不对称，需与受力因素联合复核"}。`,
-      pressure: `四象限边缘不对称度为 ${(metrics.asymmetry * 100).toFixed(1)}%，环宽或亮度方向差异支持接触面受力不均的可能。`,
-      decenter: `拟合环心偏离有效成像区中心 ${(metrics.centerOffset * 100).toFixed(1)}%，测量线可能没有穿过真实环心。`,
+      tilt: `q = ${metrics.ratio.toFixed(3)}，${orientation}；${metrics.asymmetry < 0.34 ? "可见暗环响应较均匀，但不能排除比例失真" : "可见弧段存在明暗不均，需先排除遮挡与照明影响"}。`,
+      pressure: `多环轴比差异为 ${(100*(metrics.ringSelection?.ratioSpread??0)).toFixed(2)} 个百分点；局部形变与成像畸变仍需区分。`,
+      decenter: `拟合环心偏离有效成像区中心 ${(metrics.centerOffset * 100).toFixed(1)}%，这只描述取景偏移，不代表真实读数偏心。`,
       calibration: `${orientation}且长短轴比例存在差异，应使用标准长度复核横、纵标尺比例。`,
       damage: `连续环边拟合质量仅 ${Math.round(metrics.fitQuality * 100)}%，轮廓不足以满足经验还原的闭合与可辨认前提。`,
     };
@@ -167,15 +120,15 @@ export default function Home() {
       ? diagnosis.causes.map((cause) => ({ label: CAUSES.find((item) => item.id === cause)?.short || cause, text: causeEvidence[cause] }))
       : [{ label: "未见系统偏差", text: "长短轴差异处于正圆阈值内，当前照片未给出需要强制修正的量化证据。" }];
     const restorationTitle = metrics.damaged
-      ? "先确认候选轮廓"
+      ? "先确认可见条纹"
       : metrics.ratio >= 0.975
         ? "可保留原始水平直径"
-        : "可在现场复核后组合还原";
+        : "保留原始直径，验证候选原因";
     const restorationText = metrics.damaged
-      ? "先确认虚线是否沿同一条暗环；可点选目标环或手动取点复核。若环纹被裁切或遮挡，建议补拍，本轮仍保留在实验记录中。"
+      ? "先确认虚线是否沿同一条暗环；系统已自动比较可辨认的条纹。若环纹被裁切或遮挡，建议补拍，本轮仍保留在实验记录中。"
       : selectedCauses.length
-        ? `当前选择 ${selectedCauses.length} 项原因，预估综合直径修正系数为 × ${correction.total.toFixed(5)}；进入数据页前仍应与实际装调现象核对。`
-        : "当前无需启用额外几何修正；仍建议保留原始读数和照片，便于实验报告复核。";
+        ? `已记录 ${selectedCauses.length} 项待验证原因。选中原因不会自动改变直径；仅在提供独立长度标定系数时进行相应换算。`
+        : "保留原始直径；图像形状不自动转换为补偿量；仍建议保留原始读数和照片，便于实验报告复核。";
     return {
       circularDeviation,
       eccentricity,
@@ -185,7 +138,7 @@ export default function Home() {
       restorationTitle,
       restorationText,
     };
-  }, [metrics, diagnosis, selectedCauses, correction.total]);
+  }, [metrics, diagnosis, selectedCauses]);
 
   const aiSuggestions = useMemo(() => {
     if (!metrics || !diagnosis) return [];
@@ -329,19 +282,6 @@ export default function Home() {
     setPreview(URL.createObjectURL(nextFile));
     setMetrics(null);
     setDiagnosis(null);
-    setSelectingRing(false);setTargetPoint(null);
-    setManualFit(false);
-    setFitPoints([]);
-    setError("");
-  }
-
-  function addFitPoint(event: MouseEvent<HTMLCanvasElement>) {
-    if ((!manualFit && !selectingRing) || !previewCanvas.current) return;
-    const rect = previewCanvas.current.getBoundingClientRect();
-    const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
-    if(selectingRing) {setTargetPoint({x,y});setSelectingRing(false);setError("");return;}
-    setFitPoints((current) => [...current, { x, y }].slice(0, 32));
     setError("");
   }
 
@@ -350,33 +290,29 @@ export default function Home() {
     setDragging(false);
     const files=Array.from(event.dataTransfer.files);
     if(files.length>8) {setError("每轮最多选择8张照片。");return;}
-    if (files[0]) {updateFile(files[0]);setBatchFiles(files);if(retestMode) void analyze(files[0],files,true);}
+    if (files[0]) {updateFile(files[0]);setBatchFiles(files);if(retestMode) void analyze(files[0],files);}
   }
 
-  async function analyze(chosenFile: File | null = file, chosenBatch: File[] = batchFiles, automatic = false) {
+  async function analyze(chosenFile: File | null = file, chosenBatch: File[] = batchFiles) {
     if (!chosenFile) {
       setError("请先上传牛顿环照片。");
-      return;
-    }
-    if (!automatic && manualFit && fitPoints.length < 5) {
-      setError("精准拟合至少需要沿同一条清晰圆环点击 5 个点；建议均匀点击 6–10 个点。");
       return;
     }
     if (chosenBatch.some(f=>!f.type.startsWith("image/") || f.size>12*1024*1024)) {setError("请上传每张不超过12 MB的图片。");return;}
     setError("");
     setThinking("analysis");
     try {
-      const measured = await inspectImage(chosenFile, !automatic && manualFit ? fitPoints : [], true, !automatic ? targetPoint ?? undefined : undefined);
+      const measured = await inspectImage(chosenFile);
       let nextDiagnosis = builtinDiagnosis(measured);
       if (mode === "deepseek" && !measured.damaged) {
         const response = await fetch("/api/deepseek", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ metrics: {ratio:measured.ratio,angle:measured.angle,centerOffset:measured.centerOffset,clarity:measured.clarity,asymmetry:measured.asymmetry,fitQuality:measured.fitQuality,confidence:measured.confidence,damaged:measured.damaged} }),
+          body: JSON.stringify({ metrics: {ratio:measured.ratio,angle:measured.angle,centerOffset:measured.centerOffset,clarity:measured.clarity,asymmetry:measured.asymmetry,fitQuality:measured.fitQuality,confidence:measured.confidence,damaged:measured.damaged,ringSelection:measured.ringSelection} }),
         });
         const payload = await response.json() as AiDiagnosis & { error?: string };
         if (!response.ok) throw new Error(payload.error || "增强诊断暂时没有返回结果");
-        nextDiagnosis = payload;
+        nextDiagnosis = constrainDiagnosis(measured,payload);
       } else {
         await wait(900);
       }
@@ -386,7 +322,7 @@ export default function Home() {
         for (let i=0; i<sources.length; i++) {
           const source=sources[i];
           const hash=await imageFingerprint(source);
-          const result=i===0 ? measured : await inspectImage(source, [], false);
+          const result=i===0 ? measured : await inspectImage(source, false);
           const { annotatedImage, ...observation }=result; void annotatedImage;
           samples.push({ id:newRecordId(), contentHash:hash, image:source, name:source.name, metrics:observation });
         }
@@ -395,7 +331,7 @@ export default function Home() {
         const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
         for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
           const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:"experiment", name:`牛顿环实验 ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
-          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v3",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v4",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
           const duplicates=samples.filter(s=>s.reused).length;
           setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。${duplicates ? `其中 ${duplicates} 张与已有照片重复，已保留曲线记录，但不计为新的独立测量。` : ""}`);
@@ -441,9 +377,6 @@ export default function Home() {
     setMetrics(null);
     setDiagnosis(null);
     setSelectedCauses([]);
-    setSelectingRing(false);setTargetPoint(null);
-    setManualFit(false);
-    setFitPoints([]);
     setError("");
     setReportReady(false);
     setBatchFiles([]);
@@ -455,6 +388,8 @@ export default function Home() {
   }
 
   async function calculate() {
+    const lengthFactor=Number(calibration);
+    if(!Number.isFinite(lengthFactor)||lengthFactor<.5||lengthFactor>1.5){setError("独立长度系数须在 0.5–1.5 之间；未标定时请保持 1。");return;}
     const validCount = ORDERS.filter((order) => Number(values[order]) > 0).length;
     if (validCount < 6) {
       setError("请至少填写 6 组有效直径；完整填写 8 组可获得更稳定的拟合检验。");
@@ -490,9 +425,6 @@ export default function Home() {
     setMetrics(null);
     setDiagnosis(null);
     setSelectedCauses([]);
-    setSelectingRing(false);setTargetPoint(null);
-    setManualFit(false);
-    setFitPoints([]);
     setError("");
     setValues(Object.fromEntries(ORDERS.map((order) => [order, ""])));
     setCalibration("1.0000");
@@ -505,13 +437,15 @@ export default function Home() {
   function reportText() {
     const causeText = selectedCauses.length
       ? selectedCauses.map((id) => CAUSES.find((cause) => cause.id === id)?.title).join("、")
-      : "未启用经验修正";
+      : "未选择待验证原因";
     return [
       "牛顿环实验数据还原报告",
       `图像判断：${diagnosis?.verdict || "—"}（辅助评分 ${Math.round((diagnosis?.confidence || 0) * 100)}%，非统计概率）`,
-      `AI 辅助建议（已由用户结合现场复核）：${causeText}`,
+      `待验证原因（选中不代表确认）：${causeText}`,
+      ...(metrics?.ellipse ? [`拟合椭圆（分析图像素）：中心 (${metrics.ellipse.centerX.toFixed(3)}, ${metrics.ellipse.centerY.toFixed(3)})，半轴 a=${metrics.ellipse.semiMajor.toFixed(3)}、b=${metrics.ellipse.semiMinor.toFixed(3)}，φ=${metrics.angle.toFixed(3)}°；u²/a²+v²/b²=1。`] : []),
+      `选环依据：自动比较可见暗环，绝对级次未确定；多环复核 ${metrics?.ringSelection?.checkedRingCount??0} 条；中心区域未评估。`,
       `综合直径修正系数：${correction.total.toFixed(5)}`,
-      autoCalibration ? `教学演示：渐进式标准半径标定：R₀ = ${STANDARD_RADIUS.toFixed(3)} m，α = ${CALIBRATION_STRENGTH.toFixed(2)}，k = ${calibrationInsight.factor.toFixed(6)}` : "未启用参考值修正；经验几何修正不等于恢复真实测量值。",
+      autoCalibration ? `教学演示：渐进式标准半径标定：R₀ = ${STANDARD_RADIUS.toFixed(3)} m，α = ${CALIBRATION_STRENGTH.toFixed(2)}，k = ${calibrationInsight.factor.toFixed(6)}` : "未启用参考值修正；只使用独立长度标定，不从图像轴比推算直径补偿。",
       ...(autoCalibration ? [`标定前曲率半径：${fmt(calibrationInsight.beforeRadius, 6)} m；标定前相对误差：${fmt(calibrationInsight.beforeRelativeError, 4)}%`] : []),
       `逐差平均值：${fmt(results.meanDifference, 3)} mm²`,
       `曲率半径：R = ${fmt(results.radius, 3)} ± ${fmt(results.radiusUncertainty, 3)} m`,
@@ -519,7 +453,7 @@ export default function Home() {
       `全数据线性拟合：R = ${fmt(results.regressionRadius, 3)} m，R² = ${fmt(results.rSquared, 4)}`,
       ...(autoCalibration ? [`六级数据平均相对误差：原始 ${fmt(comparisonSummary.originalMeanError, 4)}%，还原后 ${fmt(comparisonSummary.restoredMeanError, 4)}%，改善 ${fmt(comparisonSummary.improvement, 2)}%`] : []),
       `数据一致性：${resultInsight.fitLevel}；相对不确定度 ${fmt(resultInsight.uncertaintyRatio, 2)}%`,
-      "说明：单次分析中的几何修正为经验模型，不能仅由照片唯一确定真实误差；正式实验优先采用迭代实验中的原始读数与复测记录。",
+      "说明：图像自动选用清晰暗环，绝对级次未知；R 使用输入直径和级次差，D²–m 回归含截距。图像方程不提供曲率半径、中心接触状态或唯一误差成因。",
     ].join("\n");
   }
 
@@ -534,6 +468,7 @@ export default function Home() {
       "级次,原始水平直径(mm),还原直径(mm),还原直径平方(mm^2)",
       ...results.rows.filter((row) => row.valid).map((row) => `${row.order},${row.original.toFixed(3)},${row.restored.toFixed(3)},${row.square.toFixed(3)}`),
       "",
+      "图像选环,自动选择清晰暗环；绝对级次未知；不将图像环序套入读数级次",
       `综合修正系数,${correction.total.toFixed(6)}`,
       ...(autoCalibration ? [
       `标准半径(m),${STANDARD_RADIUS.toFixed(6)}`,
@@ -642,7 +577,7 @@ export default function Home() {
         <section className="workspace upload-workspace">
           <div className="section-heading">
             <span className="section-number">01</span>
-            <div><p>图像输入</p><h2>上传牛顿环照片</h2><span>自动拟合一条清晰暗环；若选环不符，可点选目标环或手动取点。</span></div>
+            <div><p>图像输入</p><h2>上传牛顿环照片</h2><span>自动比较可见暗环，优先分析清晰条纹；中心暗斑缺失时也会寻找外侧暗环。</span></div>
           </div>
 
           {retestMode && <section className="flow-adjustment" aria-label="本轮调整记录"><h3>这次做了什么调整？<small>（选填）</small></h3><p>需要记录时，请先填写，再选择照片；上传后会和本轮结果一起保存。</p><label>操作类型<select value={roundOperation} onChange={e=>setRoundOperation(e.target.value)}><option value="view">观察方向</option><option value="focus">对焦与照明</option><option value="center">取景与读数轴</option><option value="repeat">同设置重复测量</option><option value="other">其他操作</option></select></label><label>实际调整<input placeholder="例如：重新对焦，保持相机位置不变" value={roundAction} onChange={e=>setRoundAction(e.target.value)}/></label><label>拍摄或光照变化<input value={roundConfounds} onChange={e=>setRoundConfounds(e.target.value)}/></label></section>}
@@ -662,10 +597,10 @@ export default function Home() {
               onClick={() => !preview && fileInput.current?.click()}
               onKeyDown={(event) => { if (!preview && (event.key === "Enter" || event.key === " ")) fileInput.current?.click(); }}
             >
-              <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(event: ChangeEvent<HTMLInputElement>) => {const files=Array.from(event.target.files ?? []); if(files.length>8) {setError("每轮最多选择8张照片。");return;} if(files[0]) {updateFile(files[0]);setBatchFiles(files);event.target.value="";if(retestMode) void analyze(files[0],files,true);}}} />
+              <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(event: ChangeEvent<HTMLInputElement>) => {const files=Array.from(event.target.files ?? []); if(files.length>8) {setError("每轮最多选择8张照片。");return;} if(files[0]) {updateFile(files[0]);setBatchFiles(files);event.target.value="";if(retestMode) void analyze(files[0],files);}}} />
               {preview ? (
                 <>
-                  <canvas ref={previewCanvas} className={manualFit || selectingRing ? "pointing" : ""} onClick={addFitPoint} role="img" aria-label="待分析的牛顿环；精准拟合开启时可点击圆环取点" />
+                  <canvas ref={previewCanvas} role="img" aria-label="待分析的牛顿环照片" />
                   <div className="image-actions">
                     <button type="button" onClick={(event) => { event.stopPropagation(); fileInput.current?.click(); }}>更换照片</button>
                     <span>{file?.name}</span>
@@ -695,14 +630,7 @@ export default function Home() {
                 <i>{mode === "deepseek" ? "✓" : ""}</i>
               </button>
               {mode === "deepseek" && <div className="managed-ai-note"><span>✓</span><p><b>无需输入任何密钥</b><small>只提交长短轴比、偏心等量化特征，不上传原始照片。</small></p></div>}
-              {preview && <div className="fit-control"><div><span>◎</span><p><b>选择目标暗环</b><small>自动选环不符时，点选同一条暗纹的中心线</small></p><button type="button" onClick={()=>{setSelectingRing(!selectingRing);setManualFit(false);setFitPoints([]);setError("");}}>{selectingRing?"取消点选":"点选目标环"}</button></div>{selectingRing && <p className="fit-instruction">请在图片上点击要分析的暗环中心线，避开十字刻线及其邻近区域。</p>}{targetPoint && <p className="fit-instruction">已标记目标环。<button type="button" onClick={()=>setTargetPoint(null)}>恢复自动选环</button></p>}</div>}
-              {preview && (
-                <div className={`fit-control ${manualFit ? "active" : ""}`}>
-                  <div><span>◎</span><p><b>精准轮廓拟合</b><small>适合显示器拍摄、带十字刻线的照片</small></p><button type="button" onClick={() => { setManualFit((current) => !current);setSelectingRing(false);setTargetPoint(null); setFitPoints([]); setError(""); }}>{manualFit ? "退出" : "开始取点"}</button></div>
-                  {manualFit && <><p className="fit-instruction">沿<strong>同一条暗纹中心线</strong>均匀点击至少 5 个点，覆盖至少三个象限，系统会直接用这些点拟合椭圆。</p><div className="fit-counter"><span>{fitPoints.length} / 5+ 个点</span><button type="button" onClick={() => setFitPoints((current) => current.slice(0, -1))} disabled={!fitPoints.length}>撤销</button><button type="button" onClick={() => setFitPoints([])} disabled={!fitPoints.length}>清空</button></div></>}
-                </div>
-              )}
-              <div className="tip-card"><b>连续环边追踪与椭圆拟合</b><p>沿同一暗纹中心线进行亚像素定位，用异常点剔除和几何优化拟合；绿色为有效点，红色为剔除点。覆盖不足时请点选目标环或手动取点。</p></div>
+              <div className="tip-card"><b>连续环边追踪与椭圆拟合</b><p>沿同一暗纹中心线进行亚像素定位，用异常点剔除和几何优化拟合；绿色为有效点，红色为剔除点。系统按清晰度、弧段覆盖和拟合残差自动选环，不要求第一级暗环完整。</p></div>
               {error && <p className="error-message" role="alert">{error}</p>}
               <button className="primary full-button" type="button" onClick={()=>void analyze()} disabled={!file || thinking!==null}>分析圆环 <span>→</span></button>
             </aside>
@@ -716,14 +644,16 @@ export default function Home() {
             <div className="image-panel">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={metrics.annotatedImage} alt="已标注拟合椭圆的牛顿环" />
-              <span className="image-caption">{metrics.fitStatus === "review" ? "候选椭圆 · 待复核" : metrics.damaged ? "轮廓证据不足" : metrics.fitMethod === "manual" ? "精准取点拟合" : metrics.detectedScreen ? "屏幕内抗干扰迭代拟合" : "抗干扰迭代拟合"} · 质量 {Math.round(metrics.fitQuality * 100)}%</span>
-              <button className="refit-button" type="button" onClick={() => { setStep(1); setManualFit(true); setFitPoints([]); }}>拟合不准？返回重新取点</button>
+              <span className="image-caption">{metrics.fitStatus === "review" ? "候选椭圆 · 待复核" : metrics.damaged ? "轮廓证据不足" : metrics.detectedScreen ? "屏幕内抗干扰迭代拟合" : "抗干扰迭代拟合"} · 质量 {Math.round(metrics.fitQuality * 100)}%</span>
+              <button className="refit-button" type="button" onClick={() => { setStep(1); setError(""); }}>查看原图或更换照片</button>
             </div>
             <div className="verdict-panel">
               <p className="eyebrow">ANALYSIS COMPLETE</p>
               <span className={`verdict-pill ${diagnosis.causes.includes("damage") ? "danger" : metrics.ratio >= 0.975 ? "good" : "warn"}`}>{diagnosis.verdict}</span>
-              <h2>{metrics.damaged ? "先复核轮廓，再判断实验误差" : metrics.ratio >= 0.975 ? "圆度在可接受范围内" : "检测到可校正的椭圆偏差"}</h2>
+              <h2>{metrics.damaged ? "先复核轮廓，再判断实验误差" : metrics.ratio >= 0.975 ? "圆度在可接受范围内" : "检测到可见环形状偏差"}</h2>
               <p>{diagnosis.summary}</p>
+              <p className="mode-note">自动选择清晰暗环，不推断绝对级次。{metrics.ringSelection?.checkedRingCount??0} 条清晰环参与复核；中心区域未评估。</p>
+              {metrics.ellipse && <p className="mode-note">曲线方程（分析图像素）：u²/{metrics.ellipse.semiMajor.toFixed(2)}² + v²/{metrics.ellipse.semiMinor.toFixed(2)}² = 1；u=(x−{metrics.ellipse.centerX.toFixed(2)})cosφ+(y−{metrics.ellipse.centerY.toFixed(2)})sinφ，v=−(x−{metrics.ellipse.centerX.toFixed(2)})sinφ+(y−{metrics.ellipse.centerY.toFixed(2)})cosφ，φ={metrics.angle.toFixed(2)}°。</p>}
               {metrics.fitWarnings?.map(warning=><p className="mode-note" key={warning}>{warning}</p>)}
               <div className="metric-strip">
                 <div><span>长短轴比</span><b>{metrics.ratio.toFixed(3)}</b></div>
@@ -737,7 +667,7 @@ export default function Home() {
             </div>
           </div>
 
-          {!metrics.damaged && <div className="cause-section ai-advice-section">
+          {!metrics.damaged && aiSuggestions.length>0 && <div className="cause-section ai-advice-section">
             <div className="cause-heading ai-advice-heading">
               <div>
                 <p><span>调</span> INSTRUMENT ADJUSTMENT</p>
@@ -760,11 +690,11 @@ export default function Home() {
                   <b>{cause.title}</b>
                   <small>{cause.description}</small>
                   <p><span>调整建议</span>{cause.advice}</p>
-                  <em>{selectedCauses.includes(cause.id) ? (cause.recommended ? "优先建议 · 已选入后续还原" : "已由你选入后续还原") : selectedCauses.length >= MAX_RECOMMENDED_CAUSES ? "已达 3 项上限，可先取消其他项" : "点击选择并结合现场复核"}</em>
+                  <em>{selectedCauses.includes(cause.id) ? (cause.recommended ? "优先验证 · 已记录" : "已记录为待验证原因") : selectedCauses.length >= MAX_RECOMMENDED_CAUSES ? "已达 3 项上限，可先取消其他项" : "点击选择并结合现场复核"}</em>
                 </button>
               ))}
             </div>
-            <p className="probability-note">五项百分比已归一化且总和严格为 100%，表示本张照片中各原因的相对权重；AI 只优先推荐得分最高且有诊断证据的最多 3 项。该分布不等同于统计学故障概率，也不替代教师判断或仪器检修。</p>
+            <p className="probability-note">只展示当前可见条纹能够支持的待验证原因；各项权重不等同于统计故障概率。中心接触、灰尘及真实读数偏心未被评估，选中原因不会直接修改读数。</p>
           </div>}
 
           {diagnosticDetail && (
@@ -790,7 +720,7 @@ export default function Home() {
                   <span>下一步建议</span>
                   <b>{diagnosticDetail.restorationTitle}</b>
                   <p>{diagnosticDetail.restorationText}</p>
-                  <small>{metrics.fitMethod === "manual" ? "人工取点复核" : "环心迭代与离群点抑制"} · {metrics.damaged ? "待复核轮廓" : mode === "deepseek" ? "DeepSeek 特征复核" : "经验公式判断"}</small>
+                  <small>{"自动多环筛选与轮廓复核"} · {metrics.damaged ? "待复核轮廓" : mode === "deepseek" ? "DeepSeek 特征复核" : "经验公式判断"}</small>
                 </div>
               </div>
             </div>
@@ -809,7 +739,7 @@ export default function Home() {
             <div className="stop-card"><span>!</span><div><b>已停止经验还原</b><p>明显损坏会破坏模型前提，继续计算只会产生“看起来精确”的错误结果。请先更换/检修仪器并重新拍摄。</p></div><button type="button" onClick={startRetest}>按建议调整并重新上传</button></div>
           ) : (
             <div className="action-bar">
-              <div className="correction-summary"><span>当前综合修正系数</span><b>× {correction.total.toFixed(5)}</b><small>{selectedCauses.length ? `${selectedCauses.length} 项建议经现场复核后启用` : "正圆 / 不启用额外修正"}</small></div>
+              <div className="correction-summary"><span>当前综合修正系数</span><b>× {correction.total.toFixed(5)}</b><small>{correction.parts.length ? "仅应用独立长度标定；不使用图像几何补偿" : "保留原始直径"}</small></div>
               <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="primary" type="button" onClick={goToData}>环真还原 <span>→</span></button></div>
             </div>
           )}
@@ -837,8 +767,9 @@ export default function Home() {
           </div>
 
           <div className="parameter-row">
+            <label><span>独立长度系数 k（选填）</span><div><input aria-label="独立长度标定系数" type="number" min="0.5" max="1.5" step="0.000001" value={calibration} readOnly={autoCalibration} onChange={event=>setCalibration(event.target.value)} /><em>—</em></div></label>
             <label><span>光源波长 λ</span><div><input type="number" min="300" max="1000" step="0.1" value={wavelength} onChange={(event) => setWavelength(event.target.value)} /><em>nm</em></div></label>
-            <label><span>逐差级次 n</span><div><input type="number" min="5" max="35" step="5" value={interval} onChange={(event) => setInterval(event.target.value)} /><em>级</em></div></label>
+            <label><span>级次差 Δm</span><div><input type="number" min="5" max="35" step="5" value={interval} onChange={(event) => setInterval(event.target.value)} /><em>级</em></div></label>
             <label><span>介质折射率</span><div><input type="number" min="1" max="2" step="0.001" value={refractiveIndex} onChange={(event) => setRefractiveIndex(event.target.value)} /><em>—</em></div></label>
             {autoCalibration && <p role="status">教学演示：此结果向预设参考值靠拢，不作为正式测量结果。</p>}
             <div className={`factor-summary ${autoCalibration ? "auto" : ""}`}>
@@ -849,6 +780,7 @@ export default function Home() {
             </div>
           </div>
 
+          <p className="mode-note">长度系数 k 须来自标准刻尺等独立标定，未标定时保持 1。照片用于形状诊断，不给选中暗环指定第一级。以下直径须对应你记录的级次或已知相对级次差：Dₘ² = 4Rλ(m+ε)/n，R = n·ΔD²/(4λ·Δm)。共同级次偏移由回归截距吸收；漏数造成的级次差错误不能自动修复。</p>
           {correction.parts.length > 0 && (
             <div className="formula-trace"><span>修正链</span>{correction.parts.map((part) => <b key={part.name}>{part.name} × {part.factor.toFixed(5)}</b>)}<em>→ D₀ = {correction.total.toFixed(5)}D</em></div>
           )}
@@ -860,14 +792,14 @@ export default function Home() {
       {step === 3 && reportReady && !thinking && (
         <section className="workspace report-workspace">
           <div className="report-titlebar">
-            <div><p className="eyebrow">RESTORATION COMPLETE</p><h2>数据已还原，可以写入实验报告</h2><span>{diagnosis?.verdict} · {selectedCauses.length ? `${selectedCauses.length} 项复合修正` : "未启用额外修正"}</span></div>
+            <div><p className="eyebrow">RESTORATION COMPLETE</p><h2>实验数据计算完成</h2><span>{diagnosis?.verdict} · {selectedCauses.length ? `${selectedCauses.length} 项原因待验证` : "未启用额外修正"}</span></div>
             <div className="report-buttons"><button type="button" onClick={copyReport}>{copied ? "已复制 ✓" : "复制摘要"}</button><button type="button" onClick={downloadCsv}>下载 CSV</button><button className="primary" type="button" onClick={() => window.print()}>打印报告</button></div>
           </div>
 
           <div className="result-cards">
             <article className="main-result"><span>最终曲率半径</span><div><b>{fmt(results.radius, 3)}</b><em>m</em></div><p>R = {fmt(results.radius, 3)} ± {fmt(results.radiusUncertainty, 3)} m</p></article>
             <article><span>标定前曲率半径</span><b>{fmt(calibrationInsight.beforeRadius, 3)}</b><em>m</em></article>
-            {autoCalibration ? <article><span>教学演示：相对标准值精度提高</span><b>{fmt(calibrationInsight.accuracyImprovement, 2)}%</b><em>参考值接近程度</em></article> : <article><span>经验直径修正系数</span><b>{fmt(correction.total, 4)}</b><em>不代表真值还原</em></article>}
+            {autoCalibration ? <article><span>教学演示：相对标准值精度提高</span><b>{fmt(calibrationInsight.accuracyImprovement, 2)}%</b><em>参考值接近程度</em></article> : <article><span>长度标定系数</span><b>{fmt(correction.total, 4)}</b><em>不代表真值还原</em></article>}
             <article><span>全数据拟合优度</span><b>{fmt(results.rSquared, 4)}</b><em>R²</em></article>
           </div>
 
@@ -877,7 +809,7 @@ export default function Home() {
               {autoCalibration ? <>
               <article><span>01</span><div><b>渐进式标准值标定</b><p>以 R₀ = <strong>{STANDARD_RADIUS.toFixed(3)} m</strong> 为标准，仅修正 96% 的对数偏差。标定前 R = <strong>{fmt(calibrationInsight.beforeRadius, 6)} m</strong>，k = <strong>{calibrationInsight.factor.toFixed(6)}</strong>；相对误差由 <strong>{fmt(calibrationInsight.beforeRelativeError, 4)}%</strong> 降至 <strong>{fmt(calibrationInsight.afterRelativeError, 4)}%</strong>，该结果依赖预设标准值，不代表独立测量精度。</p></div></article>
               <article><span>02</span><div><b>精度提高 {fmt(calibrationInsight.accuracyImprovement, 2)}%</b><p>按“标定前后相对标准值绝对误差的下降比例”计算。它表示对 1.000 m 标准值的误差改善，不等同于测量不确定度下降。</p></div></article>
-              </> : <article><span>01</span><div><b>原始测量与经验修正</b><p>未启用参考半径修正。当前几何系数依赖候选原因假设；建议进入迭代实验，以实际调整和复测验证原因。</p></div></article>}
+              </> : <article><span>01</span><div><b>原始读数与长度标定</b><p>未启用参考半径修正。仅使用原始直径和你提供的独立长度系数；自动选环和候选原因不改变读数。实际调整及复测用于验证原因。</p></div></article>}
               <article><span>03</span><div><b>数据一致性 · {resultInsight.fitLevel}</b><p>线性拟合 R² = <strong>{fmt(results.rSquared, 4)}</strong>，相对不确定度约 <strong>{fmt(resultInsight.uncertaintyRatio, 2)}%</strong>。{resultInsight.conclusion}</p></div></article>
             </div>
           </section>
@@ -902,7 +834,7 @@ export default function Home() {
             </div>
 
             <div className="report-table-card">
-              <div className="table-title"><div><b>逐差法</b><span>实验报告同款计算</span></div><span>n = {interval}</span></div>
+              <div className="table-title"><div><b>逐差法</b><span>实验报告同款计算</span></div><span>Δm = {interval}</span></div>
               <div className="difference-list">
                 {results.pairs.map((pair) => <div key={`${pair.low}-${pair.high}`}><span>D<sub>{pair.high}</sub>² − D<sub>{pair.low}</sub>²</span><b>{fmt(pair.difference, 3)}</b></div>)}
                 <div className="mean-line"><span>平均值</span><b>{fmt(results.meanDifference, 3)} mm²</b></div>
@@ -910,7 +842,7 @@ export default function Home() {
             </div>
 
             <div className="calculation-card">
-              <div><p>曲率半径</p><b>R̄ = <span>D̄²<sub>m+n</sub> − D̄²<sub>m</sub></span> / 4nλ</b></div>
+              <div><p>曲率半径</p><b>R̄ = n介质 · <span>D̄²<sub>m+Δm</sub> − D̄²<sub>m</sub></span> / (4Δmλ)</b></div>
               <div className="calc-values"><span>逐差法 R</span><b>{fmt(results.radius, 4)} m</b><span>扩展不确定度 ΔR</span><b>{fmt(results.radiusUncertainty, 4)} m</b><span>线性拟合复核 R</span><b>{fmt(results.regressionRadius, 4)} m</b></div>
               <small>不确定度按 95% 置信水平、逐差样本的 Student-t 因子估计；用于教学实验的数据复核。</small>
             </div>
@@ -918,9 +850,9 @@ export default function Home() {
             <div className="trace-card">
               <p>本次还原记录</p>
               <div className="trace-list">
-                {correction.parts.length ? correction.parts.map((part) => <div key={part.name}><span>✓</span><p><b>{part.name}</b><small>{part.formula}</small></p><em>×{part.factor.toFixed(5)}</em></div>) : <div><span>✓</span><p><b>无需几何修正</b><small>保留原始水平直径</small></p><em>×1.00000</em></div>}
+                {correction.parts.length ? correction.parts.map((part) => <div key={part.name}><span>✓</span><p><b>{part.name}</b><small>{part.formula}</small></p><em>×{part.factor.toFixed(5)}</em></div>) : <div><span>✓</span><p><b>保留原始直径</b><small>保留原始水平直径</small></p><em>×1.00000</em></div>}
               </div>
-              <div className="quality-note"><span>i</span><p>经验还原依赖照片质量与模型假设；若条纹断裂或仪器损坏，请重新测量，不要使用本报告替代检修。</p></div>
+              <div className="quality-note"><span>i</span><p>R 来自输入直径和级次差。照片只描述可见环形状，中心区域未评估，不能由自动选环推定绝对级次或恢复真值。</p></div>
             </div>
           </div>
 

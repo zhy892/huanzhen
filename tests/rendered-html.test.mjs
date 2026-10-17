@@ -67,7 +67,7 @@ test("ships AI-assisted diagnosis, retest, and report interpretation", async () 
 test("ships robust real-photo ring fitting", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const analysis = await readFile(new URL("../core/analysis.ts", import.meta.url), "utf8");
-  assert.match(analysis, /robustGradientSample/);
+  assert.match(analysis, /selectAutomaticRings/);
   assert.match(analysis, /robustEllipseFromRing/);
   assert.match(analysis, /detectGuideLine/);
   assert.match(page, /连续环边追踪与椭圆拟合/);

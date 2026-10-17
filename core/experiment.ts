@@ -1,6 +1,8 @@
+import type { RingSelection } from "./auto-rings.ts";
 export type Observation = {
   ratio: number; angle: number; centerOffset: number; clarity: number;
   asymmetry: number; fitQuality: number; confidence: number; damaged: boolean;
+  ringSelection?: RingSelection;
 };
 export type Reading = { order: number; diameter: number };
 export type Profile = {
@@ -51,6 +53,9 @@ export function recommend(samples: Array<{ metrics: Observation }>): Recommendat
     action: '保持仪器设置，检查对焦与照明；涉及接触面操作时请参照仪器说明或请教教师。',
     expected: '清晰度提高，且轮廓完整性不下降，再检查形状。', metric: 'clarity', direction: 1,
   };
+  if(samples.some(s=>s.metrics.ringSelection?.consistency==='inconsistent'))return {
+    id:'repeat',title:'复拍核对多环差异',evidence:'可见环的轴比或圆心不一致，不能使用单一几何原因解释。',action:'保持仪器设置和拍摄尺度，复拍排查污斑、反光与局部成像差异。',expected:'先确认多环差异能否重复，再讨论局部形变；不统一补偿读数。',metric:'clarity',direction:1,
+  };
   if (m('ratio') < 0.975) return {
     id: 'view', title: '验证观察方向的影响', evidence: `平均短长轴比 ${m('ratio').toFixed(4)}；倾斜、透视和比例失真均可能产生此现象。`,
     action: '本轮仅检查观察方向与实验平面的关系，尽量保持距离、焦距和照明一致。',
@@ -67,8 +72,16 @@ export function recommend(samples: Array<{ metrics: Observation }>): Recommendat
     expected: '指标与读数波动较小；若发生系统变化，记录环境与操作因素。', metric: 'ratio', direction: 1,
   };
 }
+export function comparableRingRegions(samples:Sample[]):boolean {
+  const selections=samples.map(s=>s.metrics.ringSelection);
+  if(selections.every(s=>!s))return true; // Historical records retain their old rules.
+  if(selections.some(s=>!s || s.consistency!=="consistent"))return false;
+  const scales=selections.map(s=>s!.scaleFraction);
+  return scales.every(s=>Number.isFinite(s)&&s>0) && Math.max(...scales)/Math.min(...scales)<1.15;
+}
 export function compareRounds(a: Round, b: Round) {
   if((a.algorithmVersion??"ring-v1")!==(b.algorithmVersion??"ring-v1")) return {label:"算法版本不同",detail:"旧版与新版的识别方法不同，变化仅供查看，不能归因为仪器调整；请用新版重新建立基线。"};
+  if(!comparableRingRegions([...a.samples,...b.samples])) return {label:"选环依据不足以归因",detail:"自动选环的范围发生变化，或缺少多环一致性复核。曲线保留作形状对比，不能将选环差异直接解释为仪器调整效果。"};
   if(b.operation === "unrecorded") return {label:"仅比较变化",detail:"本轮未补充具体操作，已保存指标变化；不自动把变化归因于建议操作。"};
   if (a.confounds || b.confounds) return { label: '条件变化，暂不归因', detail: '存在拍摄或设置变化；保留差异，但不将变化归因于单项调整。' };
   const aSamples=independentSamples(a), bSamples=independentSamples(b);
@@ -89,6 +102,7 @@ export function inspectResidual(rounds: Round[]): Residual {
   const base = { historyCount: rounds.length };
   const samples=last ? independentSamples(last) : [];
   if (!last || samples.length < 3 || samples.some(s => s.metrics.damaged)) return { ...base, status: 'insufficient', message: '最近一轮需要至少 3 张质量合格的独立照片。各次上传均已记录，重复图片不计入独立测量。' };
+  if(!comparableRingRegions(samples)) return {...base,status:"insufficient",message:"本轮自动选环范围不一致或缺少多环复核。请保持拍摄尺度并拍到多条清晰暗环；不能混用不同局部环的轴比估计重复性。记录仍可输出。"};
   const q = samples.map(s => s.metrics.ratio);
   const sd = deviation(q); const residual = 1 - mean(q);
   if (!Number.isFinite(sd) || sd <= 1e-8) return { ...base, status: 'insufficient', message: '重复数据没有可估计的波动。请独立重新拍摄；不能以零波动证明无误差。' };
@@ -96,7 +110,7 @@ export function inspectResidual(rounds: Round[]): Residual {
   const validChanges: number[] = [];
   for (let i = 1; i < rounds.length; i++) {
     const a = {...rounds[i - 1],samples:independentSamples(rounds[i - 1])}, b = {...rounds[i],samples:independentSamples(rounds[i])};
-    if (((a.algorithmVersion??"ring-v1")!==(b.algorithmVersion??"ring-v1")) || a.confounds || b.confounds || b.operation !== 'view' || a.samples.length < 3 || b.samples.length < 3 || [...a.samples, ...b.samples].some(s => s.metrics.damaged)) continue;
+    if (!comparableRingRegions([...a.samples,...b.samples]) || ((a.algorithmVersion??"ring-v1")!==(b.algorithmVersion??"ring-v1")) || a.confounds || b.confounds || b.operation !== 'view' || a.samples.length < 3 || b.samples.length < 3 || [...a.samples, ...b.samples].some(s => s.metrics.damaged)) continue;
     const change = Math.abs(summarize(a, 'ratio') - summarize(b, 'ratio'));
     const noise = critical95(Math.min(a.samples.length, b.samples.length)) * Math.sqrt(deviation(a.samples.map(s => s.metrics.ratio)) ** 2 / a.samples.length + deviation(b.samples.map(s => s.metrics.ratio)) ** 2 / b.samples.length);
     if (change > noise) validChanges.push(change);
