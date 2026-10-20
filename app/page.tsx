@@ -331,7 +331,7 @@ export default function Home() {
         const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
         for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
           const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:"experiment", name:`牛顿环实验 ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
-          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v4",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v5",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
           const duplicates=samples.filter(s=>s.reused).length;
           setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。${duplicates ? `其中 ${duplicates} 张与已有照片重复，已保留曲线记录，但不计为新的独立测量。` : ""}`);

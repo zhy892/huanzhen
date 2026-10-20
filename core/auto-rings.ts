@@ -1,10 +1,15 @@
+import { searchPhotometricRing } from "./photometric-ring.ts";
+import { refineRingBand } from "./ring-refinement.ts";
+import { MIN_DARK_BAND_SUPPORT, measureRingEvidence } from "./ring-evidence.ts";
+import { smoothRingRegion } from "./ring-preprocessing.ts";
 import {
   angularSupport,
+  fitRingEllipse,
   darkCandidates,
   traceDarkRing,
 } from "./ring-tracking.ts";
 import type { Region, RingPoint } from "./ring-tracking.ts";
-import { fitRobustEllipse } from "./ellipse.ts";
+
 import type { Point, EllipseResult } from "./ellipse.ts";
 import { assessFit } from "./fit-quality.ts";
 
@@ -23,7 +28,7 @@ export type AutoRing = EllipseResult & {
   score: number;
   usable: boolean;
 };
-export function selectAutomaticRings(
+function searchRingView(
   gray: Float32Array,
   w: number,
   h: number,
@@ -31,6 +36,7 @@ export function selectAutomaticRings(
   center: Point,
   gradientScale: number,
   guide?: { x?: number; y?: number },
+  evidenceGray = gray,
 ) {
   const pool: RingPoint[][] = [];
   const size = Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0);
@@ -48,14 +54,30 @@ export function selectAutomaticRings(
   );
   function rank(): AutoRing[] {
     const rings: AutoRing[] = [];
-    for (const points of pool) {
-      const result = fitRobustEllipse(points, w, h);
+    for (const rawPoints of pool) {
+      let points = rawPoints;
+      let result = fitRingEllipse(points, w, h);
       if (
         !result ||
         result.fit.semiMinor < size * 0.09 ||
         result.coverage < 0.6
       )
         continue;
+      const bandFit = refineRingBand(gray, w, h, roi, result.fit, guide);
+      if (bandFit) {
+        result = bandFit;
+        points = bandFit.points;
+      }
+      const signal = measureRingEvidence(
+        evidenceGray,
+        w,
+        h,
+        roi,
+        result.fit,
+        guide,
+        Math.max(3, gradientScale * 0.1),
+      );
+      if (signal.fraction < MIN_DARK_BAND_SUPPORT) continue;
       const duplicate = rings.findIndex(
         (r) =>
           Math.abs(r.fit.semiMajor - result.fit.semiMajor) <
@@ -84,10 +106,13 @@ export function selectAutomaticRings(
         observedFraction: observed,
         inlierFraction: result.inliers.length / points.length,
         contrast,
+        imageEvidence: signal,
       });
       if (assessment.status === "unreliable") continue;
       const score =
-        assessment.quality * Math.min(1, result.fit.semiMinor / (size * 0.15));
+        assessment.quality *
+        signal.fraction ** 2 *
+        Math.min(1, result.fit.semiMinor / (size * 0.15));
       const candidate = {
         ...result,
         points,
@@ -114,12 +139,8 @@ export function selectAutomaticRings(
   // fringes when the central dark spot is absent. These are not user clicks.
   if (rings.length < 2 || !rings[0]?.usable) {
     const seeds: RingPoint[] = [];
-    for (const angle of [
-      Math.PI / 4,
-      (3 * Math.PI) / 4,
-      (5 * Math.PI) / 4,
-      (7 * Math.PI) / 4,
-    ]) {
+    for (let ray = 0; ray < 12; ray++) {
+      const angle = ((ray + 0.5) * Math.PI) / 6;
       const c = Math.cos(angle),
         s = Math.sin(angle);
       const edge =
@@ -145,7 +166,11 @@ export function selectAutomaticRings(
       );
     }
     const tried: number[] = [];
-    for (const seed of seeds.sort((a, b) => b.magnitude - a.magnitude)) {
+    for (const seed of seeds.sort(
+      (a, b) =>
+        b.magnitude * Math.sqrt(b.radius / size) -
+        a.magnitude * Math.sqrt(a.radius / size),
+    )) {
       if (tried.some((r) => Math.abs(r - seed.radius) < size * 0.08)) continue;
       if (
         rings.some(
@@ -174,6 +199,9 @@ export function selectAutomaticRings(
     }
     rings = rank();
   }
+  return summarizeRings(rings, size);
+}
+function summarizeRings(rings: AutoRing[], size: number) {
   if (!rings.length) return null;
   const selected = rings[0],
     checked = rings.filter((r) => r.usable && r.score >= 0.6);
@@ -208,4 +236,68 @@ export function selectAutomaticRings(
     centerRegionAssessed: false,
   };
   return { selected, rings, selection };
+}
+
+export function selectAutomaticRings(
+  gray: Float32Array,
+  w: number,
+  h: number,
+  roi: Region,
+  center: Point,
+  gradientScale: number,
+  guide?: { x?: number; y?: number },
+) {
+  const size = Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0);
+  const smooth = smoothRingRegion(gray, w, h, roi, size * 0.018, guide);
+  const differences: number[] = [];
+  for (let y = Math.ceil(roi.y0) + 10; y < roi.y1 - 10; y += 4)
+    for (let x = Math.ceil(roi.x0) + 10; x < roi.x1 - 10; x += 4) {
+      if (
+        (guide?.x !== undefined && Math.abs(x - guide.x) < 10) ||
+        (guide?.y !== undefined && Math.abs(y - guide.y) < 10)
+      )
+        continue;
+      differences.push(Math.abs(gray[y * w + x] - smooth[y * w + x]));
+    }
+  differences.sort((a, b) => a - b);
+  const textured =
+    (differences[Math.floor(differences.length / 2)] ?? 0) >
+    Math.max(2.5, gradientScale * 0.08);
+  const primary = searchRingView(
+    textured ? smooth : gray,
+    w,
+    h,
+    roi,
+    center,
+    gradientScale,
+    guide,
+    gray,
+  );
+  if (primary) return primary;
+  if (!textured) {
+    const secondary = searchRingView(
+      smooth,
+      w,
+      h,
+      roi,
+      center,
+      gradientScale,
+      guide,
+      gray,
+    );
+    if (secondary) return secondary;
+  }
+  return summarizeRings(
+    searchPhotometricRing(
+      smooth,
+      gray,
+      w,
+      h,
+      roi,
+      center,
+      gradientScale,
+      guide,
+    ),
+    size,
+  );
 }

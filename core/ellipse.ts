@@ -233,6 +233,7 @@ export function fitRobustEllipse(
   points: Point[],
   width: number,
   height: number,
+  pixelTolerance?: number,
 ): EllipseResult | null {
   if (
     points.length < 5 ||
@@ -249,7 +250,13 @@ export function fitRobustEllipse(
     fit.centerX <= width * 1.25 &&
     fit.centerY >= -height * 0.25 &&
     fit.centerY <= height * 1.25;
-  const threshold = Math.max(1.25, Math.min(width, height) * 0.0025);
+  const threshold = Math.max(
+    1.25,
+    Math.min(width, height) * 0.0025,
+    Number.isFinite(pixelTolerance)
+      ? Math.min(4.5, Math.max(0, pixelTolerance!))
+      : 0,
+  );
   let best: Ellipse | null = null,
     bestIndices: number[] = [],
     bestLoss = Infinity;

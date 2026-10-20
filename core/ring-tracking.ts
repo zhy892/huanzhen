@@ -10,6 +10,7 @@ export type RingPoint = Point & {
   magnitude: number;
   maxRadius: number;
   observed?: boolean;
+  halfWidth?: number;
 };
 export type Region = { x0: number; x1: number; y0: number; y1: number };
 export function bilinear(
@@ -45,7 +46,8 @@ function profileSample(
   s: number,
   r: number,
 ): number {
-  const samples = [-3, -1.5, 0, 1.5, 3]
+  const span = Math.max(3, Math.min(12, r * 0.05));
+  const samples = [-span, -span / 2, 0, span / 2, span]
     .map((t) => bilinear(gray, w, h, cx + c * r - s * t, cy + s * r + c * t))
     .filter(Number.isFinite);
   return samples.length >= 3 ? median(samples) : NaN;
@@ -110,11 +112,22 @@ export function darkCandidates(
             )
           : 0;
       const radius = minRadius + i + offset;
+      const halfLevel = values[i] + contrast * 0.5;
+      let l = 1,
+        r = 1;
+      while (l < window && i - l > 0 && values[i - l] < halfLevel) l++;
+      while (
+        r < window &&
+        i + r < values.length - 1 &&
+        values[i + r] < halfLevel
+      )
+        r++;
       candidates.push({
         x: center.x + c * radius,
         y: center.y + s * radius,
         radius,
         magnitude: 4 * contrast,
+        halfWidth: (l + r) / 2,
         maxRadius,
         observed: true,
         scale,
@@ -328,7 +341,7 @@ export function traceDarkRing(
       }
       if (path.filter(Boolean).length !== count) continue;
       const evidence = path.filter((p) => p.observed),
-        result = fitRobustEllipse(evidence, w, h);
+        result = fitRingEllipse(evidence, w, h);
       if (
         !result ||
         result.fit.ratio < 0.15 ||
@@ -495,7 +508,10 @@ function tracePartialRing(
   let bestEvidence: RingPoint[] | null = null,
     bestSupport = -Infinity;
   const diverse: typeof hypotheses = [];
+  const radiusCounts = new Map<number, number>();
   for (const item of hypotheses.sort((a, b) => b.score - a.score)) {
+    const radiusBin = Math.floor(item.fit.semiMajor / Math.max(10, size * 0.1));
+    if ((radiusCounts.get(radiusBin) ?? 0) >= 4) continue;
     if (
       diverse.some(
         (other) =>
@@ -512,14 +528,15 @@ function tracePartialRing(
     )
       continue;
     diverse.push(item);
+    radiusCounts.set(radiusBin, (radiusCounts.get(radiusBin) ?? 0) + 1);
     if (diverse.length >= 48) break;
   }
   for (const hypothesis of diverse) {
     let points = select(hypothesis.fit);
-    let result = fitRobustEllipse(points, w, h);
+    let result = fitRingEllipse(points, w, h);
     for (let pass = 0; result && pass < 4; pass++) {
       const nextPoints = select(result.fit),
-        next = fitRobustEllipse(nextPoints, w, h);
+        next = fitRingEllipse(nextPoints, w, h);
       if (!next || !plausible(next.fit)) break;
       points = nextPoints;
       result = next;
@@ -571,4 +588,27 @@ export function angularSupport(points: Point[], fit: Ellipse): number {
     occupied.add(Math.floor((theta / (2 * Math.PI)) * 36));
   }
   return occupied.size / 36;
+}
+
+// Broad troughs have less precise minima than sharp fringes. Scale the RANSAC
+// gate from measured radial width, with a fixed upper bound; the reported RMS
+// remains the measured residual and independent image evidence is still needed.
+export function fitRingEllipse(
+  points: Array<Point & { halfWidth?: number }>,
+  w: number,
+  h: number,
+) {
+  const strict = fitRobustEllipse(points, w, h);
+  if (
+    strict &&
+    (strict.inliers.length >= points.length * 0.7 || strict.rms < 0.8)
+  )
+    return strict;
+  const widths = points.map((p) => p.halfWidth ?? 0).filter((v) => v > 0);
+  return fitRobustEllipse(
+    points,
+    w,
+    h,
+    widths.length ? Math.min(4.5, median(widths) * 0.18) : undefined,
+  );
 }

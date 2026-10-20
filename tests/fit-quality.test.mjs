@@ -53,3 +53,49 @@ test("poor image evidence is not diagnosed as physical instrument damage", () =>
     buildAiSuggestions(metrics, diagnosis).every((c) => !c.recommended),
   );
 });
+
+test("sparse distributed arcs need independent dark-band evidence and remain review-only", () => {
+  const partial = {
+    ...input,
+    rms: 1,
+    semiMinor: 200,
+    coverage: 0.75,
+    observedFraction: 0.35,
+    inlierFraction: 0.65,
+    contrast: 0.8,
+  };
+  assert.equal(
+    assessFit({
+      ...partial,
+      imageEvidence: {
+        fraction: 0.95,
+        visibleSamples: 36,
+        supportedSamples: 34,
+      },
+    }).status,
+    "review",
+  );
+  assert.equal(
+    assessFit({
+      ...partial,
+      imageEvidence: {
+        fraction: 0.7,
+        visibleSamples: 36,
+        supportedSamples: 25,
+      },
+    }).status,
+    "unreliable",
+  );
+  assert.equal(
+    assessFit({
+      ...partial,
+      coverage: 0.6,
+      imageEvidence: {
+        fraction: 0.95,
+        visibleSamples: 36,
+        supportedSamples: 34,
+      },
+    }).status,
+    "unreliable",
+  );
+});

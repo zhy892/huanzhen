@@ -7,6 +7,11 @@ export function assessFit(input: {
   observedFraction: number;
   inlierFraction: number;
   contrast: number;
+  imageEvidence?: {
+    fraction: number;
+    visibleSamples: number;
+    supportedSamples: number;
+  };
 }) {
   const {
     rms,
@@ -28,11 +33,19 @@ export function assessFit(input: {
       contrast * 0.15) *
       Math.min(1, contrast / 0.2),
   );
+  const imageEvidence = input.imageEvidence;
+  const independentlySupportedSparseArc =
+    observedFraction >= 1 / 3 &&
+    coverage >= 0.7 &&
+    !!imageEvidence &&
+    imageEvidence.fraction >= 0.85 &&
+    imageEvidence.visibleSamples >= 24 &&
+    imageEvidence.supportedSamples >= 24;
   const geometrySupported =
     Number.isFinite(rms) &&
     rms / semiMinor <= 0.06 &&
     coverage >= 0.6 &&
-    observedFraction >= 0.4 &&
+    (observedFraction >= 0.4 || independentlySupportedSparseArc) &&
     inlierFraction >= 0.55 &&
     contrast >= 0.08;
   const accepted =
@@ -47,6 +60,10 @@ export function assessFit(input: {
       ? "accepted"
       : "review";
   const warnings: string[] = [];
+  if (independentlySupportedSparseArc && observedFraction < 0.4)
+    warnings.push(
+      "可见弧段较少，仅依据独立明暗核验展示候选曲线，不用于定量分析。",
+    );
   if (observedFraction < 0.85)
     warnings.push(
       "部分方向缺少有效暗纹，虚线包含模型推测的弧段；请核对是否为同一条环。",

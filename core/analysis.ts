@@ -1,5 +1,6 @@
-import { angularSupport, darkCandidates, traceDarkRing } from "./ring-tracking.ts";
-import { fitRobustEllipse, initializeEllipse } from "./ellipse.ts";
+import { MIN_DARK_BAND_SUPPORT, measureRingEvidence } from "./ring-evidence.ts";
+import { angularSupport, fitRingEllipse, darkCandidates, traceDarkRing } from "./ring-tracking.ts";
+import { initializeEllipse } from "./ellipse.ts";
 import { selectAutomaticRings } from "./auto-rings.ts";
 import type { RingSelection } from "./auto-rings.ts";
 import { assessFit } from "./fit-quality.ts";
@@ -26,6 +27,7 @@ export type ImageMetrics = {
   fitResidualPx?: number;
   fitCoverage?: number;
   fitInlierFraction?: number;
+  fitEvidence?: ReturnType<typeof measureRingEvidence>;
   fitObservedFraction?: number;
   fitStatus?: FitStatus;
   fitWarnings?: string[];
@@ -261,7 +263,7 @@ function median(values: number[]) {
 
 function robustEllipseFromRing(points: RingCandidate[], width: number, height: number) {
   if(points.length<20)return null;
-  const result=fitRobustEllipse(points,width,height);
+  const result=fitRingEllipse(points,width,height);
   if(!result || result.coverage<.6)return null;
   return {fit:result.fit,residual:result.rms/result.fit.semiMinor,inlierCoverage:result.inliers.length/points.length,coverage:result.coverage,inliers:result.inliers,rms:result.rms};
 }
@@ -447,6 +449,7 @@ export async function inspectImage(file: File, annotate = true): Promise<ImageMe
     if(!automatic) throw new Error("未找到足够清晰的暗环。请保持拍摄方向，改善对焦或取景后重拍；无需让中心暗斑完整出现。");
     let tracked:RingCandidate[]=automatic.selected.points;
     let robustAutoFit=robustEllipseFromRing(tracked,width,height);
+    let fitEvidence=measureRingEvidence(blurred,width,height,{x0,x1,y0,y1},automatic.selected.fit,guideMask,Math.max(3,q92*.1));
     if (robustAutoFit) {
       for (let iteration = 0; iteration < 2; iteration += 1) {
         const retraced = traceContinuousRing(
@@ -460,15 +463,17 @@ export async function inspectImage(file: File, annotate = true): Promise<ImageMe
         if (!retraced) break;
         const refined = robustEllipseFromRing(retraced, width, height);
         if (!refined || refined.residual > robustAutoFit.residual * 1.08) break;
+        const evidence=measureRingEvidence(blurred,width,height,{x0,x1,y0,y1},refined.fit,guideMask,Math.max(3,q92*.1));
+        if(evidence.fraction<MIN_DARK_BAND_SUPPORT || evidence.fraction<fitEvidence.fraction-.05)break;
         tracked = retraced;
-        robustAutoFit = refined;
+        robustAutoFit = refined;fitEvidence=evidence;
       }
     }
 
     if(robustAutoFit) {
       const finePoints=refineSourceRing(image,robustAutoFit.fit,width,height,guideMask);
       const fine=finePoints?robustEllipseFromRing(finePoints,width,height):null;
-      if(fine && Math.abs(fine.fit.ratio-robustAutoFit.fit.ratio)<.06 && Math.hypot(fine.fit.centerX-robustAutoFit.fit.centerX,fine.fit.centerY-robustAutoFit.fit.centerY)<5 && Math.abs(fine.fit.semiMajor/robustAutoFit.fit.semiMajor-1)<.05 && fine.rms<=Math.max(1,robustAutoFit.rms*1.2)) {tracked=finePoints!;robustAutoFit=fine;}
+      if(fine && Math.abs(fine.fit.ratio-robustAutoFit.fit.ratio)<.06 && Math.hypot(fine.fit.centerX-robustAutoFit.fit.centerX,fine.fit.centerY-robustAutoFit.fit.centerY)<5 && Math.abs(fine.fit.semiMajor/robustAutoFit.fit.semiMajor-1)<.05 && fine.rms<=Math.max(1,robustAutoFit.rms*1.2)) {const evidence=measureRingEvidence(blurred,width,height,{x0,x1,y0,y1},fine.fit,guideMask,Math.max(3,q92*.1));if(evidence.fraction>=MIN_DARK_BAND_SUPPORT && evidence.fraction>=fitEvidence.fraction-.05){tracked=finePoints!;robustAutoFit=fine;fitEvidence=evidence;}}
     }
     if(!robustAutoFit) throw new Error("可见暗纹不足以支持可靠曲线，请改善对焦或取景后重拍。");
     const result= {fit:robustAutoFit!.fit,rms:robustAutoFit!.rms,coverage:robustAutoFit!.coverage,inliers:robustAutoFit!.inliers};
@@ -481,7 +486,7 @@ export async function inspectImage(file: File, annotate = true): Promise<ImageMe
     const edgeCoverage=tracked.filter(p=>p.magnitude>=q76).length/tracked.length;
     const fitInlierFraction=result.inliers.length/tracked.length;
     const fitObservedFraction=angularSupport(result.inliers.map(i=>tracked![i]),result.fit);
-    const assessment=assessFit({rms:result.rms,semiMinor,minDimension:Math.min(width,height),coverage:result.coverage,observedFraction:fitObservedFraction,inlierFraction:fitInlierFraction,contrast:contrastScore});
+    const assessment=assessFit({rms:result.rms,semiMinor,minDimension:Math.min(width,height),coverage:result.coverage,observedFraction:fitObservedFraction,inlierFraction:fitInlierFraction,contrast:contrastScore,imageEvidence:fitEvidence});
     const fitQuality=assessment.quality;
     const fitResidualPx=result.rms,fitCoverage=result.coverage;
     const quadrantTotal = quadrants.reduce((sum, value) => sum + value, 0) || 1;
@@ -528,7 +533,7 @@ export async function inspectImage(file: File, annotate = true): Promise<ImageMe
     context.restore();
     const annotatedImage = annotate ? canvas.toDataURL("image/jpeg", 0.9) : "";
 
-    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, fitStatus:assessment.status,fitWarnings:assessment.warnings,fitObservedFraction,ellipse:!showEllipse?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:"dark-centerline",ringSelection:{...automatic.selection,scaleFraction:Math.sqrt(semiMajor*semiMinor)/Math.min(x1-x0,y1-y0)} };
+    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, fitEvidence, fitStatus:assessment.status,fitWarnings:assessment.warnings,fitObservedFraction,ellipse:!showEllipse?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:"dark-centerline",ringSelection:{...automatic.selection,scaleFraction:Math.sqrt(semiMajor*semiMinor)/Math.min(x1-x0,y1-y0)} };
   } finally {
     URL.revokeObjectURL(url);
   }
