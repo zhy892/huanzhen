@@ -47,10 +47,10 @@ test("ships AI-assisted diagnosis, retest, and report interpretation", async () 
   ]);
 
   assert.match(page, /仪器调整建议/);
-  assert.match(page, /各项合计 100%/);
+  assert.match(page, /全部常见原因/);
   const analysis = await readFile(new URL("../core/analysis.ts", import.meta.url), "utf8");
   assert.match(analysis, /MAX_RECOMMENDED_CAUSES = 3/);
-  assert.match(analysis, /100 - shares\.reduce/);
+  assert.match(analysis, /Scores order checks/);
   assert.match(page, /按建议调整，重新拍照/);
   assert.match(page, /辅助结果解读/);
   assert.match(page, /相对标准值精度提高/);
@@ -85,3 +85,4 @@ test("removed simulation feature has no homepage entry or route", async () => {
   const removed = await render("/simulation");
   assert.equal(removed.status, 404);
 });
+

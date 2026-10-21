@@ -632,3 +632,17 @@ tr th:last-child, tr td:last-child { border-right: 0; }
 @media print {.round-operation-edit {display:none!important;}}
 @media(max-width:650px) {.experiment-dock .flow-dialog-header {flex-wrap:wrap;}}
 @media print {.flow-dialog-header button {display:none!important;}}
+
+
+/* Complete diagnostic checklist and measured evidence. */
+.advice-card .advice-probability { min-width: 115px; }
+.advice-card .advice-probability b { font-size: 15px; }
+.cause-evidence { color: #314c40; line-height: 1.7; }
+.physical-regression { padding: 24px; margin: 24px 0; overflow-wrap: anywhere; }
+.physical-regression label { display: flex; align-items: center; gap: 12px; }
+.physical-regression input { width: 120px; padding: 8px; border: 1px solid #aebfb6; border-radius: 6px; }
+.physical-regression table { width: 100%; border-collapse: collapse; }
+.physical-regression td,.physical-regression th { padding: 10px; border-bottom: 1px solid #dbe6df; text-align: left; }
+
+.failed-diagnosis {padding:20px;text-align:left;max-height:440px;overflow:auto;background:#f1f6f2;border-radius:12px;margin-top:16px;}
+.failed-diagnosis article {margin:16px 0;border-top:1px solid #dbe6df;padding-top:12px;}

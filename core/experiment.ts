@@ -4,6 +4,7 @@ export type Observation = {
   ratio: number; angle: number; centerOffset: number; clarity: number;
   asymmetry: number; fitQuality: number; confidence: number; damaged: boolean;
   ringSelection?: RingSelection;
+  fitValidation?: import("./subpixel-ring.ts").FitValidation;
 };
 export type Reading = { order: number; diameter: number };
 export type Profile = {

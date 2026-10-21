@@ -7,7 +7,9 @@ import { newRecordId, imageFingerprint } from "../core/recording";
 import ExperimentFlow from "../components/experiment-flow";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { CauseId, Mode, ImageMetrics, AiDiagnosis, ORDERS, STANDARD_RADIUS, CALIBRATION_STRENGTH, MAX_RECOMMENDED_CAUSES, CAUSES, DEMO_DATA, clamp, wait, fmt, builtinDiagnosis, buildAiSuggestions, constrainDiagnosis, inspectImage, calculationT } from "../core/analysis";
+import { physicalRegression } from "../core/physical-regression";
+import PhysicalRegressionPanel from "../components/physical-regression";
+import { CauseId, Mode, ImageMetrics, AiDiagnosis, ORDERS, STANDARD_RADIUS, CALIBRATION_STRENGTH, CAUSES, DEMO_DATA, clamp, wait, fmt, builtinDiagnosis, buildAiSuggestions, constrainDiagnosis, inspectImage, calculationT } from "../core/analysis";
 
 export default function Home() {
   const [activeSession, setActiveSession] = useState<Session | null>(null);
@@ -109,7 +111,7 @@ export default function Home() {
         : metrics.angle > 0
           ? `长轴向右下倾斜 ${absoluteAngle.toFixed(1)}°`
           : `长轴向右上倾斜 ${absoluteAngle.toFixed(1)}°`;
-    const causeEvidence: Record<CauseId, string> = {
+    const causeEvidence: Partial<Record<CauseId, string>> = {
       tilt: `q = ${metrics.ratio.toFixed(3)}，${orientation}；${metrics.asymmetry < 0.34 ? "可见暗环响应较均匀，但不能排除比例失真" : "可见弧段存在明暗不均，需先排除遮挡与照明影响"}。`,
       pressure: `多环轴比差异为 ${(100*(metrics.ringSelection?.ratioSpread??0)).toFixed(2)} 个百分点；局部形变与成像畸变仍需区分。`,
       decenter: `拟合环心偏离有效成像区中心 ${(metrics.centerOffset * 100).toFixed(1)}%，这只描述取景偏移，不代表真实读数偏心。`,
@@ -117,7 +119,7 @@ export default function Home() {
       damage: `连续环边拟合质量仅 ${Math.round(metrics.fitQuality * 100)}%，轮廓不足以满足经验还原的闭合与可辨认前提。`,
     };
     const evidence = metrics.damaged ? [{label:"轮廓复核",text:"当前形状参数仅供核对目标环，暂不据此推断仪器误差。"}] : diagnosis.causes.length
-      ? diagnosis.causes.map((cause) => ({ label: CAUSES.find((item) => item.id === cause)?.short || cause, text: causeEvidence[cause] }))
+      ? diagnosis.causes.map((cause) => ({ label: CAUSES.find((item) => item.id === cause)?.short || cause, text: causeEvidence[cause]??CAUSES.find(item=>item.id===cause)?.description??"需现场验证" }))
       : [{ label: "未见系统偏差", text: "长短轴差异处于正圆阈值内，当前照片未给出需要强制修正的量化证据。" }];
     const restorationTitle = metrics.damaged
       ? "先确认可见条纹"
@@ -331,7 +333,7 @@ export default function Home() {
         const known=new Set(existing?.rounds.flatMap(r=>r.samples.map(s=>s.contentHash ?? s.id)) ?? []);
         for(const sample of samples) {const hash=sample.contentHash!;sample.reused=known.has(hash);known.add(hash);}
           const base:Session=existing ?? { version:1, id:newRecordId(), created:new Date().toISOString(), profile:{ kind:"experiment", name:`牛顿环实验 ${new Date().toLocaleString()}`,instrument:"未填写", wavelengthNm:Number(wavelength)||589.3,resolutionMm:.001,pixelPerMm:null,conditions:"未记录",diameterFactor:1,factorUncertainty:0 }, rounds:[],declarations:[],restorations:[] };
-          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v5",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
+          const round:Round={ id:newRecordId(),time:new Date().toISOString(),algorithmVersion:"ring-v6-normal-profile",operation:existing ? (roundAction.trim() ? roundOperation : "unrecorded") : "repeat", action:existing ? roundAction.trim() || "调整后复测" : "首次分析，建立基线",confounds:roundConfounds.trim(),samples, readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),recommendation:recommend(samples) };
           receiveSession(await saveSession({...base,rounds:[...base.rounds,round]}));
           const duplicates=samples.filter(s=>s.reused).length;
           setRecordNotice(`已自动保存第 ${base.rounds.length+1} 轮，后续复测将继续记录在同一次实验。${duplicates ? `其中 ${duplicates} 张与已有照片重复，已保留曲线记录，但不计为新的独立测量。` : ""}`);
@@ -349,20 +351,10 @@ export default function Home() {
   }
 
   function toggleCause(id: CauseId) {
-    if (id === "damage") {
-      setSelectedCauses((current) => (current.includes("damage") ? [] : ["damage"]));
-      return;
-    }
-    setSelectedCauses((current) => {
-      const safe = current.filter((cause) => cause !== "damage");
-      if (safe.includes(id)) return safe.filter((cause) => cause !== id);
-      if (safe.length >= MAX_RECOMMENDED_CAUSES) return safe;
-      return [...safe, id];
-    });
+    setSelectedCauses(current=>current.includes(id)?current.filter(c=>c!==id):[...current,id]);
   }
 
   async function goToData() {
-    if (selectedCauses.includes("damage")) return;
     setThinking("restore");
     await wait(700);
     setThinking(null);
@@ -434,6 +426,12 @@ export default function Home() {
     setRetestMode(false);
   }
 
+  function physicalReport() {
+    try { const r=physicalRegression(ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),Number(wavelength),Number(refractiveIndex),autoCalibration?1:Number(calibration));
+      return [`物理约束稳健回归 R=${r.radius.toFixed(6)} m，普通回归 R=${r.ordinaryRadius.toFixed(6)} m；固定权重逐点留出敏感性范围 ${r.leaveOneOutRange.map(v=>v.toFixed(6)).join('–')} m（非置信区间）。`,`优先核对级次：${r.flagged.join('、')||'无显著降权级次'}；未修改原始读数，未按标准半径倒算修正。`];
+    } catch { return ['物理约束稳健回归：有效级次不足或输入不满足模型，请复核原始读数。']; }
+  }
+
   function reportText() {
     const causeText = selectedCauses.length
       ? selectedCauses.map((id) => CAUSES.find((cause) => cause.id === id)?.title).join("、")
@@ -452,6 +450,8 @@ export default function Home() {
       ...(autoCalibration ? [`标定后相对误差：${fmt(calibrationInsight.afterRelativeError, 4)}%；相对标准值精度提高：${fmt(calibrationInsight.accuracyImprovement, 2)}%`] : []),
       `全数据线性拟合：R = ${fmt(results.regressionRadius, 3)} m，R² = ${fmt(results.rSquared, 4)}`,
       ...(autoCalibration ? [`六级数据平均相对误差：原始 ${fmt(comparisonSummary.originalMeanError, 4)}%，还原后 ${fmt(comparisonSummary.restoredMeanError, 4)}%，改善 ${fmt(comparisonSummary.improvement, 2)}%`] : []),
+      ...physicalReport(),
+      ...aiSuggestions.map(c=>`原因排查：${c.title} · ${c.status}；${c.evidence} 验证方法：${c.advice}`),
       `数据一致性：${resultInsight.fitLevel}；相对不确定度 ${fmt(resultInsight.uncertaintyRatio, 2)}%`,
       "说明：图像自动选用清晰暗环，绝对级次未知；R 使用输入直径和级次差，D²–m 回归含截距。图像方程不提供曲率半径、中心接触状态或唯一误差成因。",
     ].join("\n");
@@ -488,6 +488,7 @@ export default function Home() {
       `六级平均,,${comparisonSummary.originalMeanError.toFixed(6)},,${comparisonSummary.restoredMeanError.toFixed(6)}`,
       ] : []),
     ];
+    lines.push('',...physicalReport().map(line=>`"${line.replaceAll('"','""')}"`));
     const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -632,6 +633,7 @@ export default function Home() {
               {mode === "deepseek" && <div className="managed-ai-note"><span>✓</span><p><b>无需输入任何密钥</b><small>只提交长短轴比、偏心等量化特征，不上传原始照片。</small></p></div>}
               <div className="tip-card"><b>连续环边追踪与椭圆拟合</b><p>沿同一暗纹中心线进行亚像素定位，用异常点剔除和几何优化拟合；绿色为有效点，红色为剔除点。系统按清晰度、弧段覆盖和拟合残差自动选环，不要求第一级暗环完整。</p></div>
               {error && <p className="error-message" role="alert">{error}</p>}
+              {error && file && <details className="failed-diagnosis" open><summary>原因排查清单 · 当前照片尚未建立可靠轮廓</summary><p>可能首先与取景、对焦、遮挡或照明有关；以下原因全部保留供验证，不能从分析失败确认器件损坏。</p>{CAUSES.map(c=><article key={c.id}><h4>{c.title} · 待验证</h4><p>{c.description}</p><p>验证方法：{c.advice}</p></article>)}</details>}
               <button className="primary full-button" type="button" onClick={()=>void analyze()} disabled={!file || thinking!==null}>分析圆环 <span>→</span></button>
             </aside>
           </div>
@@ -655,6 +657,7 @@ export default function Home() {
               <p className="mode-note">自动选择清晰暗环，不推断绝对级次。{metrics.ringSelection?.checkedRingCount??0} 条清晰环参与复核；中心区域未评估。</p>
               {metrics.ellipse && <p className="mode-note">曲线方程（分析图像素）：u²/{metrics.ellipse.semiMajor.toFixed(2)}² + v²/{metrics.ellipse.semiMinor.toFixed(2)}² = 1；u=(x−{metrics.ellipse.centerX.toFixed(2)})cosφ+(y−{metrics.ellipse.centerY.toFixed(2)})sinφ，v=−(x−{metrics.ellipse.centerX.toFixed(2)})sinφ+(y−{metrics.ellipse.centerY.toFixed(2)})cosφ，φ={metrics.angle.toFixed(2)}°。</p>}
               {metrics.fitWarnings?.map(warning=><p className="mode-note" key={warning}>{warning}</p>)}
+              {metrics.fitValidation && <p className="mode-note">分区留出检验 · {metrics.fitValidation.adopted?'采用亚像素精修':'保留原拟合，候选未通过全部检查'}：{metrics.fitValidation.testedPoints} 个实测点，留出残差 {metrics.fitValidation.beforeHeldOutRms.toFixed(2)} → {metrics.fitValidation.heldOutRms.toFixed(2)} px；分区轴比范围 {metrics.fitValidation.ratioRange.map(v=>v.toFixed(4)).join('–')}。这是稳定性检验，不代表真值精度或统计置信区间。</p>}
               <div className="metric-strip">
                 <div><span>长短轴比</span><b>{metrics.ratio.toFixed(3)}</b></div>
                 <div><span>拟合质量</span><b>{Math.round(metrics.fitQuality * 100)}%</b></div>
@@ -663,18 +666,18 @@ export default function Home() {
                 {metrics.fitCoverage !== undefined && <div><span>环周分布覆盖</span><b>{Math.round(metrics.fitCoverage*100)}%</b></div>}
                 {metrics.fitObservedFraction !== undefined && <div><span>有效弧段覆盖</span><b>{Math.round(metrics.fitObservedFraction*100)}%</b></div>}
               </div>
-              <small className="mode-note">{metrics.damaged ? "本轮先复核轮廓，暂不进行原因推断" : mode === "deepseek" ? diagnosis.provider === "deepseek" ? "DeepSeek V4 Flash 已基于量化特征完成复核" : "增强服务未配置或不可用，已采用本地诊断" : "经验模型已完成本地分析"}</small>
+              <small className="mode-note">{metrics.damaged ? "轮廓待复核，仍列出完整原因排查与可能项" : mode === "deepseek" ? diagnosis.provider === "deepseek" ? "DeepSeek V4 Flash 已基于量化特征完成复核" : "增强服务未配置或不可用，已采用本地诊断" : "经验模型已完成本地分析"}</small>
             </div>
           </div>
 
-          {!metrics.damaged && aiSuggestions.length>0 && <div className="cause-section ai-advice-section">
+          {aiSuggestions.length>0 && <div className="cause-section ai-advice-section">
             <div className="cause-heading ai-advice-heading">
               <div>
                 <p><span>调</span> INSTRUMENT ADJUSTMENT</p>
                 <h3>仪器调整建议</h3>
                 <strong>请选择与现场现象相符的建议；AI 提供辅助判断，最终原因由你结合装调情况确认。</strong>
               </div>
-              <span>各项合计 100% · 最多推荐 3 项</span>
+              <span>全部常见原因 · 优先验证 3 项</span>
             </div>
             <div className="cause-grid ai-advice-grid">
               {aiSuggestions.map((cause, index) => (
@@ -685,16 +688,16 @@ export default function Home() {
                   onClick={() => toggleCause(cause.id)}
                 >
                   <span className="cause-index">建议 {String(index + 1).padStart(2, "0")}</span>
-                  <span className={`advice-probability ${cause.probability >= 35 ? "high" : cause.probability >= 18 ? "medium" : "low"}`}><b>{cause.probability}%</b><small>相对可能性</small></span>
+                  <span className={`advice-probability ${cause.probability >= 35 ? "high" : cause.probability >= 18 ? "medium" : "low"}`}><b>{cause.status}</b><small>排查优先级 {cause.score}/100</small></span>
                   <span className="cause-check">{selectedCauses.includes(cause.id) ? "✓" : "+"}</span>
                   <b>{cause.title}</b>
-                  <small>{cause.description}</small>
+                  <small>{cause.description}</small><p className="cause-evidence"><span>本图证据</span>{cause.evidence}</p>
                   <p><span>调整建议</span>{cause.advice}</p>
-                  <em>{selectedCauses.includes(cause.id) ? (cause.recommended ? "优先验证 · 已记录" : "已记录为待验证原因") : selectedCauses.length >= MAX_RECOMMENDED_CAUSES ? "已达 3 项上限，可先取消其他项" : "点击选择并结合现场复核"}</em>
+                  <em>{selectedCauses.includes(cause.id) ? (cause.recommended ? "优先验证 · 已记录" : "已记录为待验证原因") : "点击选择并结合现场复核"}</em>
                 </button>
               ))}
             </div>
-            <p className="probability-note">只展示当前可见条纹能够支持的待验证原因；各项权重不等同于统计故障概率。中心接触、灰尘及真实读数偏心未被评估，选中原因不会直接修改读数。</p>
+            <p className="probability-note">完整列出形状、成像、受力与读数原因。优先级只决定排查顺序，不是故障概率；“可能相关”不等于已确认。形状待复核时仍给出排查方法，选中原因不改变原始读数。</p>
           </div>}
 
           {diagnosticDetail && (
@@ -735,14 +738,10 @@ export default function Home() {
 
           {activeSession ? <ExperimentFlow embedded notice={recordNotice} session={activeSession} onChange={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));}} onResume={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));startRetest();}} onClose={()=>{}}/> : recordNotice && <p className="flow-save-note" role="status">{recordNotice}</p>}
 
-          {selectedCauses.includes("damage") ? (
-            <div className="stop-card"><span>!</span><div><b>已停止经验还原</b><p>明显损坏会破坏模型前提，继续计算只会产生“看起来精确”的错误结果。请先更换/检修仪器并重新拍摄。</p></div><button type="button" onClick={startRetest}>按建议调整并重新上传</button></div>
-          ) : (
             <div className="action-bar">
               <div className="correction-summary"><span>当前综合修正系数</span><b>× {correction.total.toFixed(5)}</b><small>{correction.parts.length ? "仅应用独立长度标定；不使用图像几何补偿" : "保留原始直径"}</small></div>
               <div className="diagnosis-actions"><button className="secondary retest-action" type="button" onClick={startRetest}>按建议调整，重新拍照 ↻</button><button className="primary" type="button" onClick={goToData}>环真还原 <span>→</span></button></div>
             </div>
-          )}
         </section>
       )}
 
@@ -803,6 +802,7 @@ export default function Home() {
             <article><span>全数据拟合优度</span><b>{fmt(results.rSquared, 4)}</b><em>R²</em></article>
           </div>
 
+          <PhysicalRegressionPanel readings={ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])}))} wavelengthNm={Number(wavelength)} refractiveIndex={Number(refractiveIndex)} factor={autoCalibration?1:Number(calibration)}/>
           <section className="report-analysis" aria-label="实验结果解读">
             <div className="report-analysis-title"><span>析</span><div><p>辅助结果解读</p><h3>把计算结果转化为可复核的实验结论</h3></div><em>结果由实验数据与预设公式计算，请结合现场情况复核</em></div>
             <div className="report-analysis-grid">
