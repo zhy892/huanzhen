@@ -514,7 +514,7 @@ export default function Home() {
             <p className="eyebrow">大学物理 A14 · 等厚干涉 · 曲率半径测量</p>
             <div className="hero-lab-badge"><span>牛顿环实验</span><b>NEWTON&apos;S RINGS LAB</b></div>
             <h1>以环纹校准，<br /><em>让数据可信。</em></h1>
-            <p className="hero-intro">专为牛顿环实验设计：上传干涉环照片，判断正圆或椭圆，定位仪器与操作误差，再按实验报告格式还原水平直径和透镜曲率半径。</p>
+            <p className="hero-intro">上传干涉环照片，分析形状与多环一致性，记录受控调整；结合独立尺度与受力形变标定，评估曲率半径的条件还原。单张椭圆照片不能唯一确定补偿量。</p>
             <div className="experiment-strip" aria-label="牛顿环实验支持内容">
               <span><b>01</b> 环纹圆度</span><span><b>02</b> 复合误差</span><span><b>03</b> 曲率半径 R</span>
             </div>
@@ -873,3 +873,4 @@ export default function Home() {
     </main>
   );
 }
+

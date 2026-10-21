@@ -5,6 +5,7 @@ import { calculate, compareRounds, inspectResidual, restore, summarize } from '.
 import { exportSession, listSessions, saveSession } from '../lib/experiment-store';
 import { newRecordId } from "../core/recording";
 import RoundTrend from './round-trend';
+import ForceCalibrationPanel from './force-calibration';
 import '../app/experiment/experiment.css';
 function Photo({ image, name }: { image: Blob; name: string }) {
   const ref=useRef<HTMLImageElement>(null);
@@ -36,6 +37,7 @@ export default function ExperimentFlow({ session, onChange, onResume, onClose, e
     <p className="dock-description">完成一次分析即可查看和输出实验记录，不限制照片数量；复测会自动续记。</p>
     {notice && <p className="flow-save-note" role="status">{notice}</p>}
     {error && <p role="alert">{error}</p>}
+    <ForceCalibrationPanel key={session?.id??'no-session'} value={session?.forceCalibration} onSave={session?async c=>onChange(await saveSession({...session,forceCalibration:c})):undefined}/>
     {session && <>
       {comparison && <p className="dock-comparison"><b>本轮对比：{comparison.label}</b> · 轴比 {summarize(previous!, 'ratio').toFixed(4)} → {summarize(last!, 'ratio').toFixed(4)}<br/><small>{comparison.detail}</small></p>}
       <RoundTrend rounds={session.rounds}/>
@@ -55,3 +57,4 @@ export default function ExperimentFlow({ session, onChange, onResume, onClose, e
     </details>
   </div></section>;
 }
+
