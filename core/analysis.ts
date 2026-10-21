@@ -8,7 +8,7 @@ import { refineSubpixelRing } from "./subpixel-ring.ts";
 import type { FitValidation } from "./subpixel-ring.ts";
 import type { FitStatus } from "./fit-quality.ts";
 import type { Ellipse } from "./ellipse.ts";
-export type CauseId = "tilt" | "pressure" | "decenter" | "calibration" | "damage" | "focus" | "illumination" | "contamination" | "distortion" | "reading";
+export type CauseId = "tilt" | "pressure" | "decenter" | "calibration" | "damage" | "focus" | "illumination" | "distortion";
 export type Mode = "empirical" | "deepseek";
 
 export type ImageMetrics = {
@@ -108,11 +108,9 @@ export const CAUSES: Array<{
     advice: "停止测量，检查光源、透镜划伤或崩边、接触面污染和显微镜成像；必要时更换仪器后重新拍照。",
     formula: "停止还原并检修仪器",
   },
-  {"id": "focus", "index": "06", "title": "对焦不足与抖动", "short": "成像模糊", "description": "宽暗纹、失焦和曝光期间的抖动会使暗纹中心定位不稳。", "advice": "固定相机后重新对焦，保持曝光和照明不变复拍。", "formula": "重复拍摄比较暗纹中心与定位残差"},
+  {"id": "focus", "index": "06", "title": "成像清晰度与局部干扰", "short": "成像复核", "description": "十字丝正常存在，少量灰尘也很常见；算法会屏蔽十字丝邻域并剔除孤立异常点。只有剩余条纹证据不足时，才进一步排查失焦、抖动或严重遮挡。", "advice": "先核对拟合是否沿同一条暗纹。若有效弧段不足或残差明显，再固定相机、检查对焦与照明并复拍；无需为了正常十字丝反复调整器件。", "formula": "十字丝屏蔽 + 切向中位数 + 鲁棒拟合 + 分区留出检验"},
   {"id": "illumination", "index": "07", "title": "照明不均与反光", "short": "照明影响", "description": "亮度梯度、局部反光和过曝会偏移暗纹极小值。", "advice": "改变照明或遮挡杂散光，避免过曝，保持器件设置不变复拍。", "formula": "比较分区对比度与暗纹位置"},
-  {"id": "contamination", "index": "08", "title": "灰尘污斑与遮挡", "short": "局部遮挡", "description": "污斑、十字线及屏幕摩尔纹会打断条纹，不能直接视作接触损伤。", "advice": "先检查成像链和屏幕；按仪器规范检查接触面，再比较同一条环。", "formula": "比较异常区域是否随相机或器件移动"},
   {"id": "distortion", "index": "09", "title": "镜头畸变与屏幕斜拍", "short": "成像畸变", "description": "镜头径向畸变、屏幕翻拍和透视可改变不同位置的环形。", "advice": "用标定板或已知矩形平面获取独立相机标定，换角度复拍对比。", "formula": "需独立相机内参与平面映射后逐点重拟合"},
-  {"id": "reading", "index": "10", "title": "级次错认与读数操作", "short": "读数误差", "description": "跳环、误认级次、回程差和录入错误不会仅凭照片轴比暴露。", "advice": "核对同一对暗环及左右读数，固定进给方向，用多级 D² 对级次回归复核。", "formula": "D² = 4Rλm/n + 截距"},
 
 ];
 
@@ -175,11 +173,9 @@ export function buildAiSuggestions(metrics: ImageMetrics, _diagnosis: AiDiagnosi
     decenter:{score:35,status:'需现场验证',evidence:`取景中心偏移 ${(100*metrics.centerOffset).toFixed(1)}%；未确定真实读数轴，不能从取景偏移直接推断弦长误差。`},
     calibration:{score:ellipse?65:30,status:ellipse?'可能相关':'需独立标定',evidence:'横纵像素比例与真实尺度无法仅凭一张环图分离；用标准刻尺复核。'},
     damage:{score:10,status:'无法凭本图确认',evidence:'低拟合质量不是物理损坏证据；需要实物检查划痕、崩边或独立复测。'},
-    focus:{score:weak?90:metrics.clarity<.4?65:20,status:weak?'优先验证':'需复拍验证',evidence:`暗纹定位 RMS=${metrics.fitResidualPx?.toFixed(2)??'未知'} px；可见角向支持 ${Math.round((metrics.fitObservedFraction??0)*100)}%。宽纹、裁切和失焦可能产生类似表现。`},
+    focus:{score:weak?82:20,status:weak?'建议复核':'常规干扰已处理',evidence:`暗纹定位 RMS=${metrics.fitResidualPx?.toFixed(2)??'未知'} px；有效角向支持 ${Math.round((metrics.fitObservedFraction??0)*100)}%。十字丝正常存在，灰尘常见；裁切、宽纹与失焦不能仅凭此区分。先检查剔除干扰后的剩余条纹证据。`},
     illumination:{score:metrics.asymmetry>.25?78:40,status:metrics.asymmetry>.25?'优先验证':'可能相关',evidence:`四象限明暗不对称指标 ${metrics.asymmetry.toFixed(3)}，裁切也会改变该指标。`},
-    contamination:{score:weak?82:45,status:weak?'优先验证':'可能相关',evidence:'污斑、十字线和摩尔纹可能干扰可见暗纹。当前只核验条纹，不确认中心接触面状态。'},
     distortion:{score:ellipse||inconsistent?62:30,status:ellipse||inconsistent?'可能相关':'需独立标定',evidence:`${metrics.detectedScreen?'检测到暖色成像区域，存在屏幕翻拍可能。':'尚未确定相机与器件几何关系。'}需标定板区分透视、比例和镜头畸变。`},
-    reading:{score:30,status:'照片无法判断',evidence:'自动选环绝对级次未知；需原始左右读数、进给方向和环级差，不能凭图像生成缺失读数。'},
   };
   return CAUSES.map(c=>({...c,probability:details[c.id].score,...details[c.id],recommended:false}))
     .sort((a,b)=>b.score-a.score).map((c,i)=>({...c,recommended:i<MAX_RECOMMENDED_CAUSES && c.id!=='damage'}));

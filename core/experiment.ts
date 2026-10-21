@@ -15,6 +15,7 @@ export type Profile = {
 };
 export type Sample = { contentHash?: string; reused?: boolean; id: string; image: Blob; metrics: Observation; name: string };
 export type Round = {
+  restorationExecution?: { selectedCauses: string[]; lengthFactor: number; steps: import('./restoration-plan.ts').RestorationStep[] };
   algorithmVersion?: string; id: string; time: string; action: string; operation: string; confounds: string;
   samples: Sample[]; readings: Reading[]; recommendation: Recommendation;
 };

@@ -7,6 +7,8 @@ import { newRecordId, imageFingerprint } from "../core/recording";
 import ExperimentFlow from "../components/experiment-flow";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { buildRestorationPlan } from "../core/restoration-plan";
+import RestorationAudit from "../components/restoration-audit";
 import { physicalRegression } from "../core/physical-regression";
 import PhysicalRegressionPanel from "../components/physical-regression";
 import { CauseId, Mode, ImageMetrics, AiDiagnosis, ORDERS, STANDARD_RADIUS, CALIBRATION_STRENGTH, CAUSES, DEMO_DATA, clamp, wait, fmt, builtinDiagnosis, buildAiSuggestions, constrainDiagnosis, inspectImage, calculationT } from "../core/analysis";
@@ -87,17 +89,8 @@ export default function Home() {
     image.src = preview;
   }, [preview, step]);
 
-  const correction = useMemo(() => {
-    const parts: Array<{ name: string; factor: number; formula: string }> = [];
-    if (autoCalibration || (Number.isFinite(Number(calibration)) && Number(calibration)>0 && Number(calibration)!==1)) {
-      parts.push({
-        name: autoCalibration ? "标准半径辅助标定" : "标尺标定",
-        factor: clamp(Number(calibration) || 1, 0.5, 1.5),
-        formula: autoCalibration ? "k = (R₀/R标定前)^(α/2)，α=0.96" : "k",
-      });
-    }
-    return { total: parts.reduce((total, part) => total * part.factor, 1), parts };
-  }, [calibration, autoCalibration]);
+  const restorationPlan=useMemo(()=>buildRestorationPlan(selectedCauses,Number(calibration),autoCalibration),[selectedCauses,calibration,autoCalibration]);
+  const correction=useMemo(()=>({total:restorationPlan.factor,parts:restorationPlan.steps.filter(s=>s.cause==='calibration'&&s.status==='applied').map(s=>({name:autoCalibration?'教学演示长度换算':'独立标尺标定',factor:restorationPlan.factor,formula:s.algorithm}))}),[restorationPlan,autoCalibration]);
 
   const diagnosticDetail = useMemo(() => {
     if (!metrics || !diagnosis) return null;
@@ -351,6 +344,7 @@ export default function Home() {
   }
 
   function toggleCause(id: CauseId) {
+    if(id==="calibration" && selectedCauses.includes(id)) setAutoCalibration(false);
     setSelectedCauses(current=>current.includes(id)?current.filter(c=>c!==id):[...current,id]);
   }
 
@@ -362,7 +356,7 @@ export default function Home() {
     setStep(3);
   }
 
-  function startRetest() {
+  function startRetest() { setAutoCalibration(false);
     if (preview) URL.revokeObjectURL(preview);
     setFile(null);
     setPreview("");
@@ -381,7 +375,7 @@ export default function Home() {
 
   async function calculate() {
     const lengthFactor=Number(calibration);
-    if(!Number.isFinite(lengthFactor)||lengthFactor<.5||lengthFactor>1.5){setError("独立长度系数须在 0.5–1.5 之间；未标定时请保持 1。");return;}
+    if(selectedCauses.includes("calibration")&&(!Number.isFinite(lengthFactor)||lengthFactor<.5||lengthFactor>1.5)){setError("独立长度系数须在 0.5–1.5 之间；未标定时请保持 1。");return;}
     const validCount = ORDERS.filter((order) => Number(values[order]) > 0).length;
     if (validCount < 6) {
       setError("请至少填写 6 组有效直径；完整填写 8 组可获得更稳定的拟合检验。");
@@ -396,7 +390,7 @@ export default function Home() {
     if(session?.rounds.length) {
       try {
         const rounds=[...session.rounds];
-        rounds[rounds.length-1]={...rounds.at(-1)!,readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])}))};
+        rounds[rounds.length-1]={...rounds.at(-1)!,restorationExecution:{selectedCauses:[...selectedCauses],lengthFactor:correction.total,steps:restorationPlan.steps},readings:ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])}))};
         receiveSession(await saveSession({...session,measurementRevision:(session.measurementRevision??0)+1, profile:{...session.profile,wavelengthNm:Number(wavelength)},rounds}));
       } catch(e) {setError(e instanceof Error ? e.message : "读数保存失败");return;}
     }
@@ -427,7 +421,7 @@ export default function Home() {
   }
 
   function physicalReport() {
-    try { const r=physicalRegression(ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),Number(wavelength),Number(refractiveIndex),autoCalibration?1:Number(calibration));
+    try { const r=physicalRegression(ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])})),Number(wavelength),Number(refractiveIndex),autoCalibration?1:restorationPlan.factor);
       return [`物理约束稳健回归 R=${r.radius.toFixed(6)} m，普通回归 R=${r.ordinaryRadius.toFixed(6)} m；固定权重逐点留出敏感性范围 ${r.leaveOneOutRange.map(v=>v.toFixed(6)).join('–')} m（非置信区间）。`,`优先核对级次：${r.flagged.join('、')||'无显著降权级次'}；未修改原始读数，未按标准半径倒算修正。`];
     } catch { return ['物理约束稳健回归：有效级次不足或输入不满足模型，请复核原始读数。']; }
   }
@@ -450,6 +444,7 @@ export default function Home() {
       ...(autoCalibration ? [`标定后相对误差：${fmt(calibrationInsight.afterRelativeError, 4)}%；相对标准值精度提高：${fmt(calibrationInsight.accuracyImprovement, 2)}%`] : []),
       `全数据线性拟合：R = ${fmt(results.regressionRadius, 3)} m，R² = ${fmt(results.rSquared, 4)}`,
       ...(autoCalibration ? [`六级数据平均相对误差：原始 ${fmt(comparisonSummary.originalMeanError, 4)}%，还原后 ${fmt(comparisonSummary.restoredMeanError, 4)}%，改善 ${fmt(comparisonSummary.improvement, 2)}%`] : []),
+      ...restorationPlan.steps.map(s=>`算法执行：${s.algorithm} · ${s.status==='applied'?'已应用':s.status==='image'?'图像阶段已处理':'未执行数值补偿'}；${s.detail}`),
       ...physicalReport(),
       ...aiSuggestions.map(c=>`原因排查：${c.title} · ${c.status}；${c.evidence} 验证方法：${c.advice}`),
       `数据一致性：${resultInsight.fitLevel}；相对不确定度 ${fmt(resultInsight.uncertaintyRatio, 2)}%`,
@@ -488,7 +483,7 @@ export default function Home() {
       `六级平均,,${comparisonSummary.originalMeanError.toFixed(6)},,${comparisonSummary.restoredMeanError.toFixed(6)}`,
       ] : []),
     ];
-    lines.push('',...physicalReport().map(line=>`"${line.replaceAll('"','""')}"`));
+    lines.push('',...restorationPlan.steps.map(s=>`"算法执行：${s.algorithm}；${s.status}；${s.detail.replaceAll('"','""')}"`),...physicalReport().map(line=>`"${line.replaceAll('"','""')}"`));
     const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -736,6 +731,7 @@ export default function Home() {
             </div>
           )}
 
+          <RestorationAudit steps={restorationPlan.steps}/>
           {activeSession ? <ExperimentFlow embedded notice={recordNotice} session={activeSession} onChange={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));}} onResume={s=>{receiveSession(s);setWavelength(String(s.profile.wavelengthNm));startRetest();}} onClose={()=>{}}/> : recordNotice && <p className="flow-save-note" role="status">{recordNotice}</p>}
 
             <div className="action-bar">
@@ -766,7 +762,7 @@ export default function Home() {
           </div>
 
           <div className="parameter-row">
-            <label><span>独立长度系数 k（选填）</span><div><input aria-label="独立长度标定系数" type="number" min="0.5" max="1.5" step="0.000001" value={calibration} readOnly={autoCalibration} onChange={event=>setCalibration(event.target.value)} /><em>—</em></div></label>
+            <label><span>独立长度系数 k（需勾选标尺比例）</span><div><input disabled={!selectedCauses.includes("calibration")} aria-label="独立长度标定系数" type="number" min="0.5" max="1.5" step="0.000001" value={calibration} readOnly={autoCalibration} onChange={event=>setCalibration(event.target.value)} /><em>—</em></div></label>
             <label><span>光源波长 λ</span><div><input type="number" min="300" max="1000" step="0.1" value={wavelength} onChange={(event) => setWavelength(event.target.value)} /><em>nm</em></div></label>
             <label><span>级次差 Δm</span><div><input type="number" min="5" max="35" step="5" value={interval} onChange={(event) => setInterval(event.target.value)} /><em>级</em></div></label>
             <label><span>介质折射率</span><div><input type="number" min="1" max="2" step="0.001" value={refractiveIndex} onChange={(event) => setRefractiveIndex(event.target.value)} /><em>—</em></div></label>
@@ -775,7 +771,7 @@ export default function Home() {
               <span>标准半径辅助标定</span>
               <b>k = {Number(calibration).toFixed(6)}</b>
               <small>{autoCalibration ? "教学参考值 R₀ = 1.000 m · 96% 渐进修正" : "独立标尺系数；默认 1"}</small>
-              <button type="button" onClick={() => { setAutoCalibration((current) => !current); setCalibration("1.0000"); setReportReady(false); }}>{autoCalibration ? "退出教学演示" : "教学演示：向参考值修正"}</button>
+              <button type="button" disabled={!selectedCauses.includes("calibration")} onClick={() => { setAutoCalibration((current) => !current); setCalibration("1.0000"); setReportReady(false); }}>{autoCalibration ? "退出教学演示" : "教学演示：向参考值修正"}</button>
             </div>
           </div>
 
@@ -784,6 +780,7 @@ export default function Home() {
             <div className="formula-trace"><span>修正链</span>{correction.parts.map((part) => <b key={part.name}>{part.name} × {part.factor.toFixed(5)}</b>)}<em>→ D₀ = {correction.total.toFixed(5)}D</em></div>
           )}
           {error && <p className="error-message centered" role="alert">{error}</p>}
+          <RestorationAudit steps={restorationPlan.steps}/>
           <div className="bottom-actions"><button className="secondary" type="button" onClick={() => setStep(2)}>← 返回诊断</button><button className="primary" type="button" onClick={calculate}>生成还原报告 <span>→</span></button></div>
         </section>
       )}
@@ -802,7 +799,8 @@ export default function Home() {
             <article><span>全数据拟合优度</span><b>{fmt(results.rSquared, 4)}</b><em>R²</em></article>
           </div>
 
-          <PhysicalRegressionPanel readings={ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])}))} wavelengthNm={Number(wavelength)} refractiveIndex={Number(refractiveIndex)} factor={autoCalibration?1:Number(calibration)}/>
+          <RestorationAudit steps={restorationPlan.steps}/>
+          <PhysicalRegressionPanel readings={ORDERS.filter(o=>Number(values[o])>0).map(o=>({order:o,diameter:Number(values[o])}))} wavelengthNm={Number(wavelength)} refractiveIndex={Number(refractiveIndex)} factor={autoCalibration?1:restorationPlan.factor}/>
           <section className="report-analysis" aria-label="实验结果解读">
             <div className="report-analysis-title"><span>析</span><div><p>辅助结果解读</p><h3>把计算结果转化为可复核的实验结论</h3></div><em>结果由实验数据与预设公式计算，请结合现场情况复核</em></div>
             <div className="report-analysis-grid">
