@@ -1,25 +1,24 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
-import { sites } from "./build/sites-vite-plugin";
+import deploymentConfig from "./deployment.config.json";
 
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
+const LOCAL_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
-const { d1, r2 } = hostingConfig;
+const { d1, r2 } = deploymentConfig;
 
-// macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
-const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
+const usePolling = process.env.WATCH_POLLING === "true";
 
 const localBindingConfig = {
+  name: "huanzhen",
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: "huanzhen-local",
+          database_id: LOCAL_DATABASE_ID,
         },
       ]
     : [],
@@ -27,7 +26,7 @@ const localBindingConfig = {
     ? [
         {
           binding: r2,
-          bucket_name: "site-creator-r2",
+          bucket_name: "huanzhen-assets",
         },
       ]
     : [],
@@ -44,12 +43,11 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
+    server: usePolling
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
       vinext(),
-      sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         config: localBindingConfig,
@@ -57,3 +55,4 @@ export default defineConfig(async () => {
     ],
   };
 });
+

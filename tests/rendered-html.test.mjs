@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
+  /<meta(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
 async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -61,7 +61,7 @@ test("ships AI-assisted diagnosis, retest, and report interpretation", async () 
   assert.match(css, /\.ai-advice-heading h3/);
   assert.match(layout, /环真｜牛顿环智能校准实验工具/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.doesNotMatch(page, /codex-preview|_sites-preview|SkeletonPreview/);
+  assert.doesNotMatch(page, /SkeletonPreview/);
 });
 
 test("ships robust real-photo ring fitting", async () => {
