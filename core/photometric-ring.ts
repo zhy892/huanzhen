@@ -58,18 +58,13 @@ export function searchPhotometricRing(
     if (
       chosen.some(
         (s) =>
-          Math.hypot(
-            s.fit.centerX - seed.fit.centerX,
-            s.fit.centerY - seed.fit.centerY,
-          ) <
+          Math.hypot(s.fit.centerX - seed.fit.centerX, s.fit.centerY - seed.fit.centerY) <
             size * 0.06 &&
           Math.abs(s.fit.semiMajor - seed.fit.semiMajor) < size * 0.06 &&
           Math.abs(s.fit.semiMinor - seed.fit.semiMinor) < size * 0.06 &&
           Math.abs(s.fit.ratio - seed.fit.ratio) < 0.03 &&
           (seed.fit.ratio > 0.98 ||
-            Math.abs(
-              Math.sin(((s.fit.angle - seed.fit.angle) * Math.PI) / 180),
-            ) < 0.26),
+            Math.abs(Math.sin(((s.fit.angle - seed.fit.angle) * Math.PI) / 180)) < 0.26),
       )
     )
       continue;
@@ -115,10 +110,7 @@ export function searchPhotometricRing(
     const duplicate = rings.findIndex(
       (r) =>
         Math.abs(r.fit.semiMajor - fitted.fit.semiMajor) < size * 0.04 &&
-        Math.hypot(
-          r.fit.centerX - fitted.fit.centerX,
-          r.fit.centerY - fitted.fit.centerY,
-        ) <
+        Math.hypot(r.fit.centerX - fitted.fit.centerX, r.fit.centerY - fitted.fit.centerY) <
           size * 0.04,
     );
     const candidate = {
@@ -127,10 +119,7 @@ export function searchPhotometricRing(
       usable: assessment.status === "accepted",
     };
     if (duplicate < 0) rings.push(candidate);
-    else if (candidate.score > rings[duplicate].score)
-      rings[duplicate] = candidate;
+    else if (candidate.score > rings[duplicate].score) rings[duplicate] = candidate;
   }
-  return rings.sort(
-    (a, b) => Number(b.usable) - Number(a.usable) || b.score - a.score,
-  );
+  return rings.sort((a, b) => Number(b.usable) - Number(a.usable) || b.score - a.score);
 }

@@ -8,12 +8,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 const baseURL = process.env.RING_TEST_BASE_URL || "http://127.0.0.1:3024/";
 if (!["localhost", "127.0.0.1", "[::1]"].includes(new URL(baseURL).hostname))
-  throw new Error(
-    "Run this generated-image check against a local test server.",
-  );
-const artifacts =
-  process.env.RING_ARTIFACT_DIR ||
-  path.join(os.tmpdir(), "huanzhen-ring-browser");
+  throw new Error("Run this generated-image check against a local test server.");
+const artifacts = process.env.RING_ARTIFACT_DIR || path.join(os.tmpdir(), "huanzhen-ring-browser");
 fs.mkdirSync(artifacts, { recursive: true });
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH,
@@ -32,10 +28,7 @@ try {
     const f = screen(spec);
     await page.goto(baseURL);
     await page.getByRole("button", { name: /开始分析/ }).click();
-    assert.equal(
-      await page.getByRole("button", { name: /取点|点选目标环/ }).count(),
-      0,
-    );
+    assert.equal(await page.getByRole("button", { name: /取点|点选目标环/ }).count(), 0);
     const png = await page.evaluate(
       ({ raw, w, h }) => {
         const canvas = document.createElement("canvas");
@@ -54,13 +47,11 @@ try {
       },
       { raw: Array.from(f.raw), w: f.w, h: f.h },
     );
-    await page
-      .locator("input[type=file]")
-      .setInputFiles({
-        name: "controlled-screen.png",
-        mimeType: "image/png",
-        buffer: Buffer.from(png, "base64"),
-      });
+    await page.locator("input[type=file]").setInputFiles({
+      name: "controlled-screen.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(png, "base64"),
+    });
     await page.getByRole("button", { name: /分析圆环/ }).click();
     await page
       .getByRole("status")
@@ -78,9 +69,7 @@ try {
             const db = q.result,
               r = db.transaction("sessions").objectStore("sessions").getAll();
             r.onsuccess = () => {
-              const s = r.result.sort((a, b) =>
-                b.created.localeCompare(a.created),
-              )[0];
+              const s = r.result.sort((a, b) => b.created.localeCompare(a.created))[0];
               resolve(s.rounds[0].samples[0].metrics);
               db.close();
             };
@@ -98,31 +87,20 @@ try {
       }),
     );
     assert.ok(metrics.ellipse, "a supported contour must be displayed");
-    assert.ok(
-      Math.hypot(
-        metrics.ellipse.centerX - f.cx,
-        metrics.ellipse.centerY - f.cy,
-      ) < 5,
-    );
+    assert.ok(Math.hypot(metrics.ellipse.centerX - f.cx, metrics.ellipse.centerY - f.cy) < 5);
     assert.ok(Math.abs(metrics.ellipse.semiMajor - f.a) < 5);
     assert.ok(Math.abs(metrics.ratio - f.b / f.a) < 0.03);
     assert.ok(metrics.fitEvidence.fraction >= 0.72);
     assert.equal(metrics.ringSelection.absoluteOrder, null);
     await page.screenshot({
-      path: path.join(
-        artifacts,
-        `controlled-${Number(spec.stains)}-${Number(spec.offset)}.png`,
-      ),
+      path: path.join(artifacts, `controlled-${Number(spec.stains)}-${Number(spec.offset)}.png`),
       fullPage: true,
     });
     results.push({ spec, metrics });
     await page.getByRole("button", { name: "新实验", exact: true }).click();
   }
   assert.deepEqual(errors, []);
-  fs.writeFileSync(
-    path.join(artifacts, "results.json"),
-    JSON.stringify(results, null, 2),
-  );
+  fs.writeFileSync(path.join(artifacts, "results.json"), JSON.stringify(results, null, 2));
   console.log("PASS browser outer-ring geometry", results.length);
 } finally {
   await browser.close();

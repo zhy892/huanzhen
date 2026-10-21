@@ -1,2 +1,4 @@
 import { redirect } from "next/navigation";
-export default function ExperimentPage() { redirect("/?tool=records"); }
+export default function ExperimentPage() {
+  redirect("/?tool=records");
+}

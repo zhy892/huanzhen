@@ -7,3 +7,4 @@ export const notes = sqliteTable("notes", {
   content: text("content").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+

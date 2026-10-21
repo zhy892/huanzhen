@@ -1,10 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  fitRobustEllipse,
-  initializeEllipse,
-  ellipseCoverage,
-} from "../core/ellipse.ts";
+import { fitRobustEllipse, initializeEllipse, ellipseCoverage } from "../core/ellipse.ts";
 import { boxBlur, detectGuideLine } from "../core/analysis.ts";
 import { bilinear, traceDarkRing } from "../core/ring-tracking.ts";
 function points({
@@ -38,8 +34,7 @@ function points({
     };
   });
 }
-const angleError = (a, b) =>
-  Math.abs(((((a - b + 90) % 180) + 180) % 180) - 90);
+const angleError = (a, b) => Math.abs(((((a - b + 90) % 180) + 180) % 180) - 90);
 test("ellipse fit recovers rotated, translated and near-circular geometry", () => {
   for (const config of [
     {},
@@ -50,39 +45,25 @@ test("ellipse fit recovers rotated, translated and near-circular geometry", () =
       fit = fitRobustEllipse(data, 700, 600);
     assert.ok(fit);
     assert.ok(
-      Math.hypot(
-        fit.fit.centerX - (config.cx ?? 256),
-        fit.fit.centerY - (config.cy ?? 250),
-      ) < 0.001,
+      Math.hypot(fit.fit.centerX - (config.cx ?? 256), fit.fit.centerY - (config.cy ?? 250)) <
+        0.001,
     );
-    assert.ok(
-      Math.abs(fit.fit.ratio - (config.b ?? 78) / (config.a ?? 130)) < 1e-5,
-    );
-    assert.ok(
-      angleError(fit.fit.angle, ((config.angle ?? 0.65) * 180) / Math.PI) <
-        0.01,
-    );
+    assert.ok(Math.abs(fit.fit.ratio - (config.b ?? 78) / (config.a ?? 130)) < 1e-5);
+    assert.ok(angleError(fit.fit.angle, ((config.angle ?? 0.65) * 180) / Math.PI) < 0.01);
   }
 });
 test("local coordinate normalization handles ellipses passing through image center", () => {
-  const fit = fitRobustEllipse(
-    points({ cx: 356, cy: 256, a: 100, b: 70, angle: 0 }),
-    512,
-    512,
-  );
+  const fit = fitRobustEllipse(points({ cx: 356, cy: 256, a: 100, b: 70, angle: 0 }), 512, 512);
   assert.ok(fit);
   assert.ok(Math.abs(fit.fit.centerX - 356) < 0.001);
   assert.ok(Math.abs(fit.fit.ratio - 0.7) < 1e-5);
 });
 test("RANSAC rejects isolated points rather than moving the ellipse toward them", () => {
   const data = points({ noise: 1.2 });
-  for (let i = 0; i < 45; i++)
-    data.push({ x: 30 + ((i * 83) % 450), y: 20 + ((i * 137) % 470) });
+  for (let i = 0; i < 45; i++) data.push({ x: 30 + ((i * 83) % 450), y: 20 + ((i * 137) % 470) });
   const result = fitRobustEllipse(data, 512, 512);
   assert.ok(result);
-  assert.ok(
-    Math.hypot(result.fit.centerX - 256, result.fit.centerY - 250) < 0.5,
-  );
+  assert.ok(Math.hypot(result.fit.centerX - 256, result.fit.centerY - 250) < 0.5);
   assert.ok(Math.abs(result.fit.ratio - 0.6) < 0.005);
   assert.ok(result.inliers.length < data.length * 0.9);
   assert.ok(result.rms < 0.6);
@@ -114,10 +95,7 @@ test("coverage and residual respond to poor data instead of reporting fixed qual
   );
 });
 test("bilinear sampling preserves fractional positions", () => {
-  assert.equal(
-    bilinear(new Float32Array([0, 10, 20, 30]), 2, 2, 0.25, 0.75),
-    17.5,
-  );
+  assert.equal(bilinear(new Float32Array([0, 10, 20, 30]), 2, 2, 0.25, 0.75), 17.5);
 });
 function fixture({ cross = false, flat = false } = {}) {
   const w = 512,
@@ -142,8 +120,7 @@ function fixture({ cross = false, flat = false } = {}) {
           170 * Math.exp(-(((r - 1.38) / 0.025) ** 2)) -
           120 * Math.exp(-(((r - 0.65) / 0.025) ** 2)) +
           (8 * x) / w;
-      if (cross && (Math.abs(x - cx) < 3 || Math.abs(y - cy) < 3))
-        gray[y * w + x] = 20;
+      if (cross && (Math.abs(x - cx) < 3 || Math.abs(y - cy) < 3)) gray[y * w + x] = 20;
     }
   const t = 0.8;
   return {
@@ -176,9 +153,7 @@ test("targeted dark-centerline tracking stays on one ring despite a stronger nei
   assert.ok(result);
   assert.ok(Math.abs(result.fit.semiMajor - f.a) < 1);
   assert.ok(Math.abs(result.fit.ratio - 0.7) < 0.007);
-  assert.ok(
-    Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 1,
-  );
+  assert.ok(Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 1);
 });
 test("tracking masks a narrow crosshair but refuses a featureless image", () => {
   const f = fixture({ cross: true });
@@ -247,9 +222,7 @@ function photographedFringes({
         obscured || flat || textureOnly
           ? 0
           : contrast * Math.exp(-(((r - 1) / 0.13) ** 2)) +
-            (inner
-              ? contrast * 0.8 * Math.exp(-(((r - 0.58) / 0.12) ** 2))
-              : 0);
+            (inner ? contrast * 0.8 * Math.exp(-(((r - 0.58) / 0.12) ** 2)) : 0);
       gray[y * w + x] = flat
         ? 110
         : 145 +
@@ -258,8 +231,7 @@ function photographedFringes({
           fringe +
           3 * Math.sin(x * 2.1) +
           2 * Math.sin(y * 0.73);
-      if (!flat && (Math.abs(x - 360) < 1.5 || Math.abs(y - 270) < 1.5))
-        gray[y * w + x] -= 45;
+      if (!flat && (Math.abs(x - 360) < 1.5 || Math.abs(y - 270) < 1.5)) gray[y * w + x] -= 45;
     }
   const t = 2.4,
     c = Math.cos(angle),
@@ -281,23 +253,14 @@ function photographedFringes({
 }
 test("wide low-contrast fringes survive screen texture and narrow crosshairs", () => {
   const f = photographedFringes();
-  const path = traceDarkRing(
-    f.gray,
-    f.w,
-    f.h,
-    f.roi,
-    { x: 360, y: 270 },
-    35,
-    f.target,
-    undefined,
-    { x: 360, y: 270 },
-  );
+  const path = traceDarkRing(f.gray, f.w, f.h, f.roi, { x: 360, y: 270 }, 35, f.target, undefined, {
+    x: 360,
+    y: 270,
+  });
   assert.ok(path);
   const result = fitRobustEllipse(path, f.w, f.h);
   assert.ok(result);
-  assert.ok(
-    Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 3,
-  );
+  assert.ok(Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 3);
   assert.ok(Math.abs(result.fit.semiMajor - f.a) < 3);
   assert.ok(Math.abs(result.fit.ratio - f.b / f.a) < 0.025);
 });
@@ -320,18 +283,12 @@ test("denoised screen-clipped and stained arcs recover one ring without adding p
     assert.ok(
       path.every(
         (p) =>
-          p.observed &&
-          p.x >= f.roi.x0 &&
-          p.x <= f.roi.x1 &&
-          p.y >= f.roi.y0 &&
-          p.y <= f.roi.y1,
+          p.observed && p.x >= f.roi.x0 && p.x <= f.roi.x1 && p.y >= f.roi.y0 && p.y <= f.roi.y1,
       ),
     );
     const result = fitRobustEllipse(path, f.w, f.h);
     assert.ok(result);
-    assert.ok(
-      Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 5,
-    );
+    assert.ok(Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 5);
     assert.ok(Math.abs(result.fit.semiMajor - f.a) < 5);
     assert.ok(Math.abs(result.fit.ratio - f.b / f.a) < 0.035);
   }
@@ -339,23 +296,14 @@ test("denoised screen-clipped and stained arcs recover one ring without adding p
 
 test("a displaced ring center is estimated independently of the crosshair intersection", () => {
   const f = photographedFringes({ offcenter: true });
-  const path = traceDarkRing(
-    f.gray,
-    f.w,
-    f.h,
-    f.roi,
-    { x: 360, y: 270 },
-    35,
-    f.target,
-    undefined,
-    { x: 360, y: 270 },
-  );
+  const path = traceDarkRing(f.gray, f.w, f.h, f.roi, { x: 360, y: 270 }, 35, f.target, undefined, {
+    x: 360,
+    y: 270,
+  });
   assert.ok(path);
   const result = fitRobustEllipse(path, f.w, f.h);
   assert.ok(result);
-  assert.ok(
-    Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 4,
-  );
+  assert.ok(Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 4);
   assert.ok(Math.abs(result.fit.ratio - f.b / f.a) < 0.03);
 });
 test("screen texture and a crosshair alone do not establish a ring", () => {
@@ -380,16 +328,12 @@ test("clipped fringe tracking survives grayscale conversion, screen inset and bl
     const gray = Float32Array.from(f.gray, (v) =>
       v <= 5
         ? 5
-        : Math.round(v * 1.5) * 0.299 +
-          Math.round(v * 0.75) * 0.587 +
-          Math.round(v * 0.12) * 0.114,
+        : Math.round(v * 1.5) * 0.299 + Math.round(v * 0.75) * 0.587 + Math.round(v * 0.12) * 0.114,
     );
     const roi = { x0: 89, x1: 636, y0: 114, y1: 436 };
     const vg = detectGuideLine(gray, f.w, f.h, roi, "vertical"),
       hg = detectGuideLine(gray, f.w, f.h, roi, "horizontal");
-    assert.ok(
-      Math.abs(vg.coordinate - 360) < 2 && Math.abs(hg.coordinate - 270) < 2,
-    );
+    assert.ok(Math.abs(vg.coordinate - 360) < 2 && Math.abs(hg.coordinate - 270) < 2);
     const guide = { x: vg.coordinate, y: hg.coordinate },
       blurred = boxBlur(boxBlur(gray, f.w, f.h, 2), f.w, f.h, 2);
     const path = traceDarkRing(
@@ -406,9 +350,7 @@ test("clipped fringe tracking survives grayscale conversion, screen inset and bl
     assert.ok(path);
     const result = fitRobustEllipse(path, f.w, f.h);
     assert.ok(result);
-    assert.ok(
-      Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 4,
-    );
+    assert.ok(Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 4);
     assert.ok(Math.abs(result.fit.semiMajor - f.a) < 4);
     assert.ok(Math.abs(result.fit.ratio - f.b / f.a) < 0.03);
   }
@@ -417,23 +359,14 @@ test("clipped fringe tracking survives grayscale conversion, screen inset and bl
 test("automatic selection recovers a clipped outer fringe without requiring a target click", () => {
   const f = photographedFringes({ clipped: true, inner: false });
   const gray = boxBlur(boxBlur(f.gray, f.w, f.h, 2), f.w, f.h, 2);
-  const path = traceDarkRing(
-    gray,
-    f.w,
-    f.h,
-    f.roi,
-    { x: 360, y: 270 },
-    35,
-    undefined,
-    undefined,
-    { x: 360, y: 270 },
-  );
+  const path = traceDarkRing(gray, f.w, f.h, f.roi, { x: 360, y: 270 }, 35, undefined, undefined, {
+    x: 360,
+    y: 270,
+  });
   assert.ok(path);
   const result = fitRobustEllipse(path, f.w, f.h);
   assert.ok(result);
-  assert.ok(
-    Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 4,
-  );
+  assert.ok(Math.hypot(result.fit.centerX - f.cx, result.fit.centerY - f.cy) < 4);
   assert.ok(Math.abs(result.fit.semiMajor - f.a) < 4);
   assert.ok(Math.abs(result.fit.ratio - f.b / f.a) < 0.03);
 });

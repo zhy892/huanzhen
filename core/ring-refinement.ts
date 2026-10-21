@@ -22,12 +22,7 @@ export function refineRingBand(
         c = Math.cos(theta),
         s = Math.sin(theta),
         phi = theta - (fit.angle * Math.PI) / 180;
-      const expected =
-        1 /
-        Math.hypot(
-          Math.cos(phi) / fit.semiMajor,
-          Math.sin(phi) / fit.semiMinor,
-        );
+      const expected = 1 / Math.hypot(Math.cos(phi) / fit.semiMajor, Math.sin(phi) / fit.semiMinor);
       const edge = Math.min(
         (c > 0 ? roi.x1 - fit.centerX : roi.x0 - fit.centerX) / c,
         (s > 0 ? roi.y1 - fit.centerY : roi.y0 - fit.centerY) / s,
@@ -49,8 +44,7 @@ export function refineRingBand(
       );
       if (!candidates.length) continue;
       const best = candidates.reduce((a, b) =>
-        a.magnitude - Math.abs(a.radius - expected) >
-        b.magnitude - Math.abs(b.radius - expected)
+        a.magnitude - Math.abs(a.radius - expected) > b.magnitude - Math.abs(b.radius - expected)
           ? a
           : b,
       );
@@ -62,10 +56,7 @@ export function refineRingBand(
       !measured ||
       measured.coverage < 0.6 ||
       Math.abs(measured.fit.semiMajor / initial.semiMajor - 1) > 0.15 ||
-      Math.hypot(
-        measured.fit.centerX - initial.centerX,
-        measured.fit.centerY - initial.centerY,
-      ) >
+      Math.hypot(measured.fit.centerX - initial.centerX, measured.fit.centerY - initial.centerY) >
         Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0) * 0.1
     )
       break;

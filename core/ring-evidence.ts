@@ -37,11 +37,7 @@ export function measureRingEvidence(
     supportedSamples: 0,
   };
   for (const band of [
-    ...new Set(
-      [0.025, 0.05, 0.1, 0.16].map((k) =>
-        Math.max(3, Math.min(48, fit.semiMinor * k)),
-      ),
-    ),
+    ...new Set([0.025, 0.05, 0.1, 0.16].map((k) => Math.max(3, Math.min(48, fit.semiMinor * k)))),
   ]) {
     const contrasts: number[] = [];
     for (let i = 0; i < sampleCount; i++) {
@@ -65,13 +61,7 @@ export function measureRingEvidence(
         for (const t of [-span, -span / 2, 0, span / 2, span]) {
           const px = x + nx * offset - ny * t,
             py = y + ny * offset + nx * t;
-          if (
-            px < roi.x0 + 1 ||
-            px > roi.x1 - 1 ||
-            py < roi.y0 + 1 ||
-            py > roi.y1 - 1
-          )
-            continue;
+          if (px < roi.x0 + 1 || px > roi.x1 - 1 || py < roi.y0 + 1 || py > roi.y1 - 1) continue;
           const value = bilinear(gray, w, h, px, py);
           if (Number.isFinite(value)) values.push(value);
         }

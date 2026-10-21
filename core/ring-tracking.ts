@@ -88,10 +88,7 @@ export function darkCandidates(
     const values = scale ? smooth(smooth(profile, scale), scale) : profile;
     for (let i = 2; i < values.length - 2; i++) {
       if (!(values[i] < values[i - 1] && values[i] <= values[i + 1])) continue;
-      const window = Math.max(
-        8,
-        Math.min(80, Math.round((minRadius + i) * 0.3)),
-      );
+      const window = Math.max(8, Math.min(80, Math.round((minRadius + i) * 0.3)));
       let left = -Infinity,
         right = -Infinity;
       for (let j = Math.max(0, i - window); j < i; j++)
@@ -103,25 +100,14 @@ export function darkCandidates(
       const denominator = values[i - 1] - 2 * values[i] + values[i + 1];
       const offset =
         denominator > 1e-8
-          ? Math.max(
-              -0.5,
-              Math.min(
-                0.5,
-                (0.5 * (values[i - 1] - values[i + 1])) / denominator,
-              ),
-            )
+          ? Math.max(-0.5, Math.min(0.5, (0.5 * (values[i - 1] - values[i + 1])) / denominator))
           : 0;
       const radius = minRadius + i + offset;
       const halfLevel = values[i] + contrast * 0.5;
       let l = 1,
         r = 1;
       while (l < window && i - l > 0 && values[i - l] < halfLevel) l++;
-      while (
-        r < window &&
-        i + r < values.length - 1 &&
-        values[i + r] < halfLevel
-      )
-        r++;
+      while (r < window && i + r < values.length - 1 && values[i + r] < halfLevel) r++;
       candidates.push({
         x: center.x + c * radius,
         y: center.y + s * radius,
@@ -137,8 +123,7 @@ export function darkCandidates(
   // Prefer a stable smoothed trough over multiple texture minima in that trough.
   const merged: RingPoint[] = [];
   for (const candidate of candidates.sort(
-    (a, b) =>
-      b.magnitude * (1 + b.scale * 0.08) - a.magnitude * (1 + a.scale * 0.08),
+    (a, b) => b.magnitude * (1 + b.scale * 0.08) - a.magnitude * (1 + a.scale * 0.08),
   )) {
     const separation = Math.max(4, Math.min(14, candidate.radius * 0.045));
     if (merged.every((p) => Math.abs(p.radius - candidate.radius) > separation))
@@ -162,9 +147,7 @@ export function traceDarkRing(
   const count = 240,
     size = Math.min(roi.x1 - roi.x0, roi.y1 - roi.y0),
     minimum = Math.max(6, size * 0.035);
-  const offset = target
-    ? Math.atan2(target.y - center.y, target.x - center.x)
-    : 0;
+  const offset = target ? Math.atan2(target.y - center.y, target.x - center.x) : 0;
   const rays: RingPoint[][] = [];
   for (let i = 0; i < count; i++) {
     const theta = offset + (2 * Math.PI * i) / count,
@@ -185,13 +168,9 @@ export function traceDarkRing(
       continue;
     }
     const hitX =
-      Math.abs(c) < 1e-8
-        ? Infinity
-        : (c > 0 ? roi.x1 - center.x : roi.x0 - center.x) / c;
+      Math.abs(c) < 1e-8 ? Infinity : (c > 0 ? roi.x1 - center.x : roi.x0 - center.x) / c;
     const hitY =
-      Math.abs(s) < 1e-8
-        ? Infinity
-        : (s > 0 ? roi.y1 - center.y : roi.y0 - center.y) / s;
+      Math.abs(s) < 1e-8 ? Infinity : (s > 0 ? roi.y1 - center.y : roi.y0 - center.y) / s;
     const maximum = Math.min(hitX, hitY) * 0.96;
     if (maximum < minimum + 8) {
       rays.push([]);
@@ -212,9 +191,7 @@ export function traceDarkRing(
         (guide?.y === undefined || Math.abs(p.y - guide.y) > 6),
     );
     let selected: RingPoint[] = [];
-    for (const candidate of [...all].sort(
-      (a, b) => b.magnitude - a.magnitude,
-    )) {
+    for (const candidate of [...all].sort((a, b) => b.magnitude - a.magnitude)) {
       if (selected.every((p) => Math.abs(p.radius - candidate.radius) > 3))
         selected.push(candidate);
       if (selected.length >= 8) break;
@@ -223,19 +200,11 @@ export function traceDarkRing(
       const angle = theta - (prediction.angle * Math.PI) / 180;
       const expected =
         1 /
-        Math.hypot(
-          Math.cos(angle) / prediction.semiMajor,
-          Math.sin(angle) / prediction.semiMinor,
-        );
-      const nearby = all.filter(
-        (p) => Math.abs(p.radius - expected) < Math.max(4, size * 0.025),
-      );
+        Math.hypot(Math.cos(angle) / prediction.semiMajor, Math.sin(angle) / prediction.semiMinor);
+      const nearby = all.filter((p) => Math.abs(p.radius - expected) < Math.max(4, size * 0.025));
       selected = [
         ...nearby
-          .sort(
-            (a, b) =>
-              Math.abs(a.radius - expected) - Math.abs(b.radius - expected),
-          )
+          .sort((a, b) => Math.abs(a.radius - expected) - Math.abs(b.radius - expected))
           .slice(0, 3),
       ];
     }
@@ -244,25 +213,14 @@ export function traceDarkRing(
       const nearest = all.reduce((best, p) =>
         Math.abs(p.radius - radius) < Math.abs(best.radius - radius) ? p : best,
       );
-      if (Math.abs(nearest.radius - radius) > Math.max(7, size * 0.025))
-        return null;
+      if (Math.abs(nearest.radius - radius) > Math.max(7, size * 0.025)) return null;
       selected = [nearest];
     }
     rays.push(selected.sort((a, b) => a.radius - b.radius));
   }
   const missing = rays.filter((ray) => !ray.length).length;
   const partial = () =>
-    tracePartialRing(
-      rays,
-      w,
-      h,
-      roi,
-      center,
-      gradientScale,
-      target,
-      prediction,
-      candidatesOut,
-    );
+    tracePartialRing(rays, w, h, roi, center, gradientScale, target, prediction, candidatesOut);
   if (missing > count * 0.22) return partial();
   // Missing directions carry no image evidence. Interpolated candidates only
   // bridge the path; they are never passed to the geometric fit as observations.
@@ -326,9 +284,7 @@ export function traceDarkRing(
     const ends = scores
       .map((score, end) => ({
         end,
-        score:
-          score -
-          2 * ((rays.at(-1)![end].radius - rays[0][start].radius) / jump) ** 2,
+        score: score - 2 * ((rays.at(-1)![end].radius - rays[0][start].radius) / jump) ** 2,
       }))
       .sort((a, b) => b.score - a.score);
     for (const { end } of ends.slice(0, 1)) {
@@ -346,8 +302,7 @@ export function traceDarkRing(
         !result ||
         result.fit.ratio < 0.15 ||
         (target &&
-          (Math.abs(ellipseResidual(target, result.fit)) >
-            Math.max(7, size * 0.025) ||
+          (Math.abs(ellipseResidual(target, result.fit)) > Math.max(7, size * 0.025) ||
             Math.abs(ellipseResidual(rays[0][0], result.fit)) >
               Math.max(2, Math.min(w, h) * 0.004))) ||
         result.coverage < 0.65 ||
@@ -358,8 +313,7 @@ export function traceDarkRing(
       if (residual > Math.max(2.5, result.fit.semiMinor * 0.025)) continue;
       candidatesOut?.push(evidence);
       const closure = (path.at(-1)!.radius - path[0].radius) / jump;
-      const score =
-        (scores[end] - 2 * closure * closure) / count - 0.35 * residual;
+      const score = (scores[end] - 2 * closure * closure) / count - 0.35 * residual;
       if (score > bestScore) {
         bestScore = score;
         best = evidence;
@@ -435,9 +389,7 @@ function tracePartialRing(
         distance = Infinity;
       for (const p of ray) {
         const d = Math.abs(ellipseResidual(p, fit));
-        const cost =
-          d -
-          band * 0.45 * Math.log1p(p.magnitude / Math.max(4, gradientScale));
+        const cost = d - band * 0.45 * Math.log1p(p.magnitude / Math.max(4, gradientScale));
         if (d < band && cost < distance) {
           best = p;
           distance = cost;
@@ -451,25 +403,20 @@ function tracePartialRing(
       fit.ratio >= 0.35 &&
       fit.semiMinor >= size * 0.07 &&
       fit.semiMajor < Math.max(roi.x1 - roi.x0, roi.y1 - roi.y0) * 0.85 &&
-      Math.hypot(fit.centerX - center.x, fit.centerY - center.y) <
-        size * 0.27 &&
-      (!target ||
-        Math.abs(ellipseResidual(target, fit)) < Math.max(7, size * 0.025))
+      Math.hypot(fit.centerX - center.x, fit.centerY - center.y) < size * 0.27 &&
+      (!target || Math.abs(ellipseResidual(target, fit)) < Math.max(7, size * 0.025))
     );
   }
   const hypotheses: Array<{ fit: Ellipse; score: number }> = prediction
     ? [{ fit: prediction, score: 0 }]
     : [];
   for (const origin of centers) {
-    const anchors = target
-      ? [Math.hypot(target.x - origin.x, target.y - origin.y)]
-      : radii;
+    const anchors = target ? [Math.hypot(target.x - origin.x, target.y - origin.y)] : radii;
     for (const radius of anchors)
       for (const ratio of [1, 0.9, 0.85, 0.8, 0.75, 0.7, 0.6])
         for (const angle of ratio === 1 ? [0] : [0, 45, 90, 135]) {
           const phi = target
-            ? Math.atan2(target.y - origin.y, target.x - origin.x) -
-              (angle * Math.PI) / 180
+            ? Math.atan2(target.y - origin.y, target.x - origin.x) - (angle * Math.PI) / 180
             : 0;
           const a = radius * Math.hypot(Math.cos(phi), Math.sin(phi) / ratio);
           let fit: Ellipse = {
@@ -489,11 +436,7 @@ function tracePartialRing(
             fit = next;
           }
           const selected = select(fit);
-          if (
-            selected.length < rays.length * 0.3 ||
-            ellipseCoverage(selected, fit) < 0.6
-          )
-            continue;
+          if (selected.length < rays.length * 0.3 || ellipseCoverage(selected, fit) < 0.6) continue;
           const score = selected.reduce(
             (sum, p) =>
               sum +
@@ -515,15 +458,11 @@ function tracePartialRing(
     if (
       diverse.some(
         (other) =>
-          Math.hypot(
-            item.fit.centerX - other.fit.centerX,
-            item.fit.centerY - other.fit.centerY,
-          ) < 4 &&
+          Math.hypot(item.fit.centerX - other.fit.centerX, item.fit.centerY - other.fit.centerY) <
+            4 &&
           Math.abs(item.fit.semiMajor - other.fit.semiMajor) < 4 &&
           Math.abs(item.fit.semiMinor - other.fit.semiMinor) < 4 &&
-          Math.abs(
-            Math.sin(((item.fit.angle - other.fit.angle) * Math.PI) / 180),
-          ) < 0.1,
+          Math.abs(Math.sin(((item.fit.angle - other.fit.angle) * Math.PI) / 180)) < 0.1,
       )
     )
       continue;
@@ -551,8 +490,7 @@ function tracePartialRing(
     if (
       target &&
       rays[0][0] &&
-      Math.abs(ellipseResidual(rays[0][0], result.fit)) >
-        Math.max(2, Math.min(w, h) * 0.004)
+      Math.abs(ellipseResidual(rays[0][0], result.fit)) > Math.max(2, Math.min(w, h) * 0.004)
     )
       continue;
     const evidence = result.inliers.map((i) => points[i]);
@@ -579,10 +517,7 @@ export function angularSupport(points: Point[], fit: Ellipse): number {
     const dx = p.x - fit.centerX,
       dy = p.y - fit.centerY;
     const theta =
-      (Math.atan2(
-        (-dx * s + dy * c) / fit.semiMinor,
-        (dx * c + dy * s) / fit.semiMajor,
-      ) +
+      (Math.atan2((-dx * s + dy * c) / fit.semiMinor, (dx * c + dy * s) / fit.semiMajor) +
         2 * Math.PI) %
       (2 * Math.PI);
     occupied.add(Math.floor((theta / (2 * Math.PI)) * 36));
@@ -599,11 +534,7 @@ export function fitRingEllipse(
   h: number,
 ) {
   const strict = fitRobustEllipse(points, w, h);
-  if (
-    strict &&
-    (strict.inliers.length >= points.length * 0.7 || strict.rms < 0.8)
-  )
-    return strict;
+  if (strict && (strict.inliers.length >= points.length * 0.7 || strict.rms < 0.8)) return strict;
   const widths = points.map((p) => p.halfWidth ?? 0).filter((v) => v > 0);
   return fitRobustEllipse(
     points,

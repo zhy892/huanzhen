@@ -33,9 +33,7 @@ test("automatic fitting selects a clear outer fringe when central fringes are mi
     const f = image({ inner });
     const result = selectAutomaticRings(f.gray, f.w, f.h, f.roi, f.center, 35);
     assert.ok(result);
-    assert.ok(
-      [140, 195].some((a) => Math.abs(a - result.selected.fit.semiMajor) < 2),
-    );
+    assert.ok([140, 195].some((a) => Math.abs(a - result.selected.fit.semiMajor) < 2));
     assert.ok(Math.abs(result.selected.fit.ratio - 0.8) < 0.015);
     assert.equal(result.selection.absoluteOrder, null);
     assert.equal(result.selection.centerRegionAssessed, false);
@@ -59,10 +57,7 @@ test("incompatible visible rings do not establish a single global shape", () => 
 });
 test("automatic search does not fit a featureless image", () => {
   const f = image({ flat: true });
-  assert.equal(
-    selectAutomaticRings(f.gray, f.w, f.h, f.roi, f.center, 35),
-    null,
-  );
+  assert.equal(selectAutomaticRings(f.gray, f.w, f.h, f.roi, f.center, 35), null);
 });
 test("remote advice cannot infer central damage or reading eccentricity from an outer ring", () => {
   const metrics = {
@@ -79,6 +74,6 @@ test("remote advice cannot infer central damage or reading eccentricity from an 
   });
   assert.deepEqual(diagnosis.causes, ["tilt", "calibration"]);
   assert.equal(diagnosis.confidence, 0.8);
-  assert.doesNotMatch(diagnosis.summary,/已确认中心损坏|应用偏心补偿/);
+  assert.doesNotMatch(diagnosis.summary, /已确认中心损坏|应用偏心补偿/);
   assert.match(diagnosis.summary, /中心接触状态和真实读数偏心未评估/);
 });

@@ -2,8 +2,7 @@ import vinext from "vinext";
 import { defineConfig } from "vite";
 import deploymentConfig from "./deployment.config.json";
 
-const LOCAL_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
+const LOCAL_DATABASE_ID = "00000000-0000-4000-8000-000000000000";
 
 const { d1, r2 } = deploymentConfig;
 
@@ -43,9 +42,7 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: usePolling
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: usePolling ? { watch: { useFsEvents: false, usePolling: true } } : undefined,
     plugins: [
       vinext(),
       cloudflare({
@@ -55,4 +52,3 @@ export default defineConfig(async () => {
     ],
   };
 });
-

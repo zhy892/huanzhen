@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
+const developmentPreviewMeta = /<meta(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
 async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -38,7 +37,7 @@ test("server-renders the huanzhen Newton rings homepage", async () => {
   assert.match(html, /开始分析/);
 });
 
-test("ships AI-assisted diagnosis, retest, and report interpretation", async () => {
+test("ships diagnosis, retest, and report interpretation", async () => {
   const [css, page, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -75,7 +74,7 @@ test("ships robust real-photo ring fitting", async () => {
 
 test("legacy iteration route returns to the unified workspace", async () => {
   const response = await render("/experiment");
-  assert.ok([301,302,303,307,308].includes(response.status));
+  assert.ok([301, 302, 303, 307, 308].includes(response.status));
   assert.match(response.headers.get("location"), /\/\?tool=records$/);
 });
 
@@ -85,4 +84,3 @@ test("removed simulation feature has no homepage entry or route", async () => {
   const removed = await render("/simulation");
   assert.equal(removed.status, 404);
 });
-

@@ -25,10 +25,7 @@ test("well-fitted visible arcs remain reviewable when much of the ring is missin
 });
 test("featureless data and short arcs cannot produce supported ellipses", () => {
   assert.equal(assessFit({ ...input, contrast: 0 }).status, "unreliable");
-  assert.equal(
-    assessFit({ ...input, observedFraction: 0.25, coverage: 0.4 }).status,
-    "unreliable",
-  );
+  assert.equal(assessFit({ ...input, observedFraction: 0.25, coverage: 0.4 }).status, "unreliable");
   assert.equal(assessFit({ ...input, rms: 14 }).status, "unreliable");
 });
 test("poor image evidence is not diagnosed as physical instrument damage", () => {
@@ -49,10 +46,10 @@ test("poor image evidence is not diagnosed as physical instrument damage", () =>
   const diagnosis = builtinDiagnosis(metrics);
   assert.equal(diagnosis.verdict, "拟合待复核");
   assert.deepEqual(diagnosis.causes, []);
-  const suggestions=buildAiSuggestions(metrics, diagnosis);
-  assert.ok(suggestions.find(c=>c.id==='focus').recommended);
-  assert.equal(suggestions.find(c=>c.id==='damage').recommended,false);
-  assert.equal(suggestions.find(c=>c.id==='damage').status,'无法凭本图确认');
+  const suggestions = buildAiSuggestions(metrics, diagnosis);
+  assert.ok(suggestions.find((c) => c.id === "focus").recommended);
+  assert.equal(suggestions.find((c) => c.id === "damage").recommended, false);
+  assert.equal(suggestions.find((c) => c.id === "damage").status, "无法凭本图确认");
 });
 
 test("sparse distributed arcs need independent dark-band evidence and remain review-only", () => {
@@ -100,4 +97,3 @@ test("sparse distributed arcs need independent dark-band evidence and remain rev
     "unreliable",
   );
 });
-

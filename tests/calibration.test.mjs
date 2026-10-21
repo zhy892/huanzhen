@@ -6,8 +6,8 @@ const WAVELENGTH_NM = 589.3;
 const INTERVAL = 15;
 const CALIBRATION_STRENGTH = 0.96;
 const DEMO_DATA = {
-  5: 4.420,
-  10: 6.250,
+  5: 4.42,
+  10: 6.25,
   15: 7.657,
   20: 8.572,
   25: 9.508,
@@ -17,16 +17,21 @@ const DEMO_DATA = {
 };
 
 test("standard-radius calibration moves the report sample toward 1.000 m", () => {
-  const differences = [15, 20, 25].map((low) => DEMO_DATA[low + INTERVAL] ** 2 - DEMO_DATA[low] ** 2);
+  const differences = [15, 20, 25].map(
+    (low) => DEMO_DATA[low + INTERVAL] ** 2 - DEMO_DATA[low] ** 2,
+  );
   const meanDifference = differences.reduce((sum, value) => sum + value, 0) / differences.length;
   const beforeRadius = (meanDifference * 1e-6) / (4 * INTERVAL * WAVELENGTH_NM * 1e-9);
   const calibrationFactor = (STANDARD_RADIUS / beforeRadius) ** (CALIBRATION_STRENGTH / 2);
   const afterRadius = beforeRadius * calibrationFactor ** 2;
-  const beforeError = Math.abs(beforeRadius - STANDARD_RADIUS) / STANDARD_RADIUS * 100;
-  const afterError = Math.abs(afterRadius - STANDARD_RADIUS) / STANDARD_RADIUS * 100;
-  const improvement = (beforeError - afterError) / beforeError * 100;
+  const beforeError = (Math.abs(beforeRadius - STANDARD_RADIUS) / STANDARD_RADIUS) * 100;
+  const afterError = (Math.abs(afterRadius - STANDARD_RADIUS) / STANDARD_RADIUS) * 100;
+  const improvement = ((beforeError - afterError) / beforeError) * 100;
 
-  assert.equal(differences.map((value) => value.toFixed(6)).join(","), "48.182576,52.431657,52.257072");
+  assert.equal(
+    differences.map((value) => value.toFixed(6)).join(","),
+    "48.182576,52.431657,52.257072",
+  );
   assert.equal(meanDifference.toFixed(6), "50.957102");
   assert.equal(beforeRadius.toFixed(6), "1.441176");
   assert.equal(calibrationFactor.toFixed(6), "0.839104");

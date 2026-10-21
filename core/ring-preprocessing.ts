@@ -22,8 +22,7 @@ export function smoothRingRegion(
       for (let x = left + 1; x < right; x++)
         source[y * w + x] =
           source[y * w + left] +
-          ((source[y * w + right] - source[y * w + left]) * (x - left)) /
-            (right - left);
+          ((source[y * w + right] - source[y * w + left]) * (x - left)) / (right - left);
   }
   if (guide?.y !== undefined) {
     const top = Math.max(y0, Math.floor(guide.y) - 7),
@@ -32,8 +31,7 @@ export function smoothRingRegion(
       for (let y = top + 1; y < bottom; y++)
         source[y * w + x] =
           source[top * w + x] +
-          ((source[bottom * w + x] - source[top * w + x]) * (y - top)) /
-            (bottom - top);
+          ((source[bottom * w + x] - source[top * w + x]) * (y - top)) / (bottom - top);
   }
   let current = source;
   const r = Math.max(1, Math.min(12, Math.round(radius)));
@@ -42,24 +40,20 @@ export function smoothRingRegion(
       result = current.slice();
     for (let y = y0; y <= y1; y++) {
       const sums = new Float64Array(x1 - x0 + 2);
-      for (let x = x0; x <= x1; x++)
-        sums[x - x0 + 1] = sums[x - x0] + current[y * w + x];
+      for (let x = x0; x <= x1; x++) sums[x - x0 + 1] = sums[x - x0] + current[y * w + x];
       for (let x = x0; x <= x1; x++) {
         const left = Math.max(x0, x - r),
           right = Math.min(x1, x + r);
-        horizontal[y * w + x] =
-          (sums[right - x0 + 1] - sums[left - x0]) / (right - left + 1);
+        horizontal[y * w + x] = (sums[right - x0 + 1] - sums[left - x0]) / (right - left + 1);
       }
     }
     for (let x = x0; x <= x1; x++) {
       const sums = new Float64Array(y1 - y0 + 2);
-      for (let y = y0; y <= y1; y++)
-        sums[y - y0 + 1] = sums[y - y0] + horizontal[y * w + x];
+      for (let y = y0; y <= y1; y++) sums[y - y0 + 1] = sums[y - y0] + horizontal[y * w + x];
       for (let y = y0; y <= y1; y++) {
         const top = Math.max(y0, y - r),
           bottom = Math.min(y1, y + r);
-        result[y * w + x] =
-          (sums[bottom - y0 + 1] - sums[top - y0]) / (bottom - top + 1);
+        result[y * w + x] = (sums[bottom - y0 + 1] - sums[top - y0]) / (bottom - top + 1);
       }
     }
     current = result;
