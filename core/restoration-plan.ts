@@ -5,7 +5,7 @@ export type RestorationStep = {
   status: "applied" | "image" | "pending";
   detail: string;
 };
-export function buildRestorationPlan(selected: CauseId[], lengthFactor: number, teaching = false) {
+export function buildRestorationPlan(selected: CauseId[], lengthFactor: number) {
   const valid = Number.isFinite(lengthFactor) && lengthFactor >= 0.5 && lengthFactor <= 1.5;
   const factor = selected.includes("calibration") && valid ? lengthFactor : 1;
   const mapping: Record<CauseId, Omit<RestorationStep, "cause">> = {
@@ -13,7 +13,7 @@ export function buildRestorationPlan(selected: CauseId[], lengthFactor: number, 
       algorithm: "独立长度标定 D₀=kD",
       status: valid ? "applied" : "pending",
       detail: valid
-        ? `${teaching ? "教学演示系数" : "独立长度系数"} k=${lengthFactor.toFixed(6)}，仅在勾选本项时应用。`
+        ? `独立长度系数 k=${lengthFactor.toFixed(6)}，仅在勾选本项时应用。`
         : "系数无效，未应用；请填写 0.5–1.5 范围的独立标定系数。",
     },
     focus: {

@@ -58,8 +58,6 @@ export type FitPoint = { x: number; y: number };
 type EllipseFit = Ellipse;
 
 export const ORDERS = [5, 10, 15, 20, 25, 30, 35, 40];
-export const STANDARD_RADIUS = 1.0;
-export const CALIBRATION_STRENGTH = 0.96;
 export const MAX_RECOMMENDED_CAUSES = 3;
 
 export const CAUSES: Array<{

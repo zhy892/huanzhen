@@ -16,8 +16,6 @@ import {
   ImageMetrics,
   AiDiagnosis,
   ORDERS,
-  STANDARD_RADIUS,
-  CALIBRATION_STRENGTH,
   CAUSES,
   DEMO_DATA,
   clamp,
@@ -62,7 +60,6 @@ export default function Home() {
   const [refractiveIndex, setRefractiveIndex] = useState("1.000");
   const [interval, setInterval] = useState("15");
   const [calibration, setCalibration] = useState("1.0000");
-  const [autoCalibration, setAutoCalibration] = useState(false);
   const [values, setValues] = useState<Record<number, string>>(() =>
     Object.fromEntries(ORDERS.map((order) => [order, ""])),
   );
@@ -148,8 +145,8 @@ export default function Home() {
   }, [preview, step]);
 
   const restorationPlan = useMemo(
-    () => buildRestorationPlan(selectedCauses, Number(calibration), autoCalibration),
-    [selectedCauses, calibration, autoCalibration],
+    () => buildRestorationPlan(selectedCauses, Number(calibration)),
+    [selectedCauses, calibration],
   );
   const correction = useMemo(
     () => ({
@@ -157,12 +154,12 @@ export default function Home() {
       parts: restorationPlan.steps
         .filter((s) => s.cause === "calibration" && s.status === "applied")
         .map((s) => ({
-          name: autoCalibration ? "教学演示长度换算" : "独立标尺标定",
+          name: "独立标尺标定",
           factor: restorationPlan.factor,
           formula: s.algorithm,
         })),
     }),
-    [restorationPlan, autoCalibration],
+    [restorationPlan],
   );
 
   const diagnosticDetail = useMemo(() => {
@@ -307,83 +304,6 @@ export default function Home() {
       rSquared,
     };
   }, [values, correction.total, interval, wavelength, refractiveIndex]);
-
-  useEffect(() => {
-    if (!autoCalibration || !Number.isFinite(results.radius) || results.radius <= 0) return;
-    const currentFactor = clamp(Number(calibration) || 1, 0.5, 1.5);
-    const preCalibrationRadius = results.radius / currentFactor ** 2;
-    if (!Number.isFinite(preCalibrationRadius) || preCalibrationRadius <= 0) return;
-    const nextFactor = clamp(
-      (STANDARD_RADIUS / preCalibrationRadius) ** (CALIBRATION_STRENGTH / 2),
-      0.5,
-      1.5,
-    );
-    const nextValue = nextFactor.toFixed(6);
-    if (nextValue !== calibration) {
-      const updateTimer = window.setTimeout(() => {
-        setCalibration(nextValue);
-        setReportReady(false);
-      }, 0);
-      return () => window.clearTimeout(updateTimer);
-    }
-  }, [autoCalibration, calibration, results.radius]);
-
-  const calibrationInsight = useMemo(() => {
-    const factor = autoCalibration ? clamp(Number(calibration) || 1, 0.5, 1.5) : 1;
-    const beforeRadius =
-      autoCalibration && Number.isFinite(results.radius)
-        ? results.radius / factor ** 2
-        : results.radius;
-    const beforeRelativeError = Number.isFinite(beforeRadius)
-      ? (Math.abs(beforeRadius - STANDARD_RADIUS) / STANDARD_RADIUS) * 100
-      : Number.NaN;
-    const afterRelativeError = Number.isFinite(results.radius)
-      ? (Math.abs(results.radius - STANDARD_RADIUS) / STANDARD_RADIUS) * 100
-      : Number.NaN;
-    const accuracyImprovement =
-      Number.isFinite(beforeRelativeError) && beforeRelativeError > 1e-12
-        ? clamp(((beforeRelativeError - afterRelativeError) / beforeRelativeError) * 100, 0, 100)
-        : 0;
-    return { factor, beforeRadius, beforeRelativeError, afterRelativeError, accuracyImprovement };
-  }, [autoCalibration, calibration, results.radius]);
-
-  const levelComparisons = useMemo(() => {
-    const lambda = Number(wavelength) * 1e-9;
-    const mediumIndex = Number(refractiveIndex);
-    if (!Number.isFinite(lambda) || lambda <= 0 || !Number.isFinite(mediumIndex)) return [];
-    return results.rows
-      .filter((row) => row.valid && row.order >= 15)
-      .slice(0, 6)
-      .map((row) => {
-        const originalRadius = (row.original ** 2 * 1e-6 * mediumIndex) / (4 * row.order * lambda);
-        const restoredRadius = (row.restored ** 2 * 1e-6 * mediumIndex) / (4 * row.order * lambda);
-        return {
-          order: row.order,
-          originalRadius,
-          originalError: (Math.abs(originalRadius - STANDARD_RADIUS) / STANDARD_RADIUS) * 100,
-          restoredRadius,
-          restoredError: (Math.abs(restoredRadius - STANDARD_RADIUS) / STANDARD_RADIUS) * 100,
-        };
-      });
-  }, [results.rows, wavelength, refractiveIndex]);
-
-  const comparisonSummary = useMemo(() => {
-    if (!levelComparisons.length)
-      return {
-        originalMeanError: Number.NaN,
-        restoredMeanError: Number.NaN,
-        improvement: Number.NaN,
-      };
-    const originalMeanError =
-      levelComparisons.reduce((sum, row) => sum + row.originalError, 0) / levelComparisons.length;
-    const restoredMeanError =
-      levelComparisons.reduce((sum, row) => sum + row.restoredError, 0) / levelComparisons.length;
-    const improvement =
-      originalMeanError > 0
-        ? clamp(((originalMeanError - restoredMeanError) / originalMeanError) * 100, 0, 100)
-        : 0;
-    return { originalMeanError, restoredMeanError, improvement };
-  }, [levelComparisons]);
 
   const resultInsight = useMemo(() => {
     const uncertaintyRatio =
@@ -560,7 +480,6 @@ export default function Home() {
   }
 
   function toggleCause(id: CauseId) {
-    if (id === "calibration" && selectedCauses.includes(id)) setAutoCalibration(false);
     setSelectedCauses((current) =>
       current.includes(id) ? current.filter((c) => c !== id) : [...current, id],
     );
@@ -575,7 +494,6 @@ export default function Home() {
   }
 
   function startRetest() {
-    setAutoCalibration(false);
     if (preview) URL.revokeObjectURL(preview);
     setFile(null);
     setPreview("");
@@ -669,7 +587,6 @@ export default function Home() {
     setError("");
     setValues(Object.fromEntries(ORDERS.map((order) => [order, ""])));
     setCalibration("1.0000");
-    setAutoCalibration(false);
     setCopied(false);
     setReportReady(false);
     setRetestMode(false);
@@ -684,7 +601,7 @@ export default function Home() {
         })),
         Number(wavelength),
         Number(refractiveIndex),
-        autoCalibration ? 1 : restorationPlan.factor,
+        restorationPlan.factor,
       );
       return [
         `物理约束稳健回归 R=${r.radius.toFixed(6)} m，普通回归 R=${r.ordinaryRadius.toFixed(6)} m；固定权重逐点留出敏感性范围 ${r.leaveOneOutRange.map((v) => v.toFixed(6)).join("–")} m（非置信区间）。`,
@@ -710,27 +627,10 @@ export default function Home() {
         : []),
       `选环依据：自动比较可见暗环，绝对级次未确定；多环复核 ${metrics?.ringSelection?.checkedRingCount ?? 0} 条；中心区域未评估。`,
       `综合直径修正系数：${correction.total.toFixed(5)}`,
-      autoCalibration
-        ? `教学演示：渐进式标准半径标定：R₀ = ${STANDARD_RADIUS.toFixed(3)} m，α = ${CALIBRATION_STRENGTH.toFixed(2)}，k = ${calibrationInsight.factor.toFixed(6)}`
-        : "未启用参考值修正；只使用独立长度标定，不从图像轴比推算直径补偿。",
-      ...(autoCalibration
-        ? [
-            `标定前曲率半径：${fmt(calibrationInsight.beforeRadius, 6)} m；标定前相对误差：${fmt(calibrationInsight.beforeRelativeError, 4)}%`,
-          ]
-        : []),
+      "结果基于用户输入的实测直径、实验参数及独立长度系数；系统不代替仪器读数，也不预设器材真实半径。",
       `逐差平均值：${fmt(results.meanDifference, 3)} mm²`,
-      `曲率半径：R = ${fmt(results.radius, 3)} ± ${fmt(results.radiusUncertainty, 3)} m`,
-      ...(autoCalibration
-        ? [
-            `标定后相对误差：${fmt(calibrationInsight.afterRelativeError, 4)}%；相对标准值精度提高：${fmt(calibrationInsight.accuracyImprovement, 2)}%`,
-          ]
-        : []),
+      `还原曲率估计：R = ${fmt(results.radius, 3)} ± ${fmt(results.radiusUncertainty, 3)} m`,
       `全数据线性拟合：R = ${fmt(results.regressionRadius, 3)} m，R² = ${fmt(results.rSquared, 4)}`,
-      ...(autoCalibration
-        ? [
-            `六级数据平均相对误差：原始 ${fmt(comparisonSummary.originalMeanError, 4)}%，还原后 ${fmt(comparisonSummary.restoredMeanError, 4)}%，改善 ${fmt(comparisonSummary.improvement, 2)}%`,
-          ]
-        : []),
       ...restorationPlan.steps.map(
         (s) =>
           `算法执行：${s.algorithm} · ${s.status === "applied" ? "已应用" : s.status === "image" ? "图像阶段已处理" : "未执行数值补偿"}；${s.detail}`,
@@ -739,7 +639,8 @@ export default function Home() {
       ...aiSuggestions.map(
         (c) => `原因排查：${c.title} · ${c.status}；${c.evidence} 验证方法：${c.advice}`,
       ),
-      `数据一致性：${resultInsight.fitLevel}；相对不确定度 ${fmt(resultInsight.uncertaintyRatio, 2)}%`,
+      `数据一致性：${resultInsight.fitLevel}；组间离散对应的相对不确定度 ${fmt(resultInsight.uncertaintyRatio, 2)}%，不表示相对真值误差。`,
+      "不确定度说明：按逐差样本离散及 Student-t 因子估算，尚未包含尺度、波长及模型偏差；逐差组相关时不代表严格的 95% 覆盖区间。",
       "说明：图像自动选用清晰暗环，绝对级次未知；R 使用输入直径和级次差，D²–m 回归含截距。图像方程不提供曲率半径、中心接触状态或唯一误差成因。",
     ].join("\n");
   }
@@ -762,30 +663,11 @@ export default function Home() {
       "",
       "图像选环,自动选择清晰暗环；绝对级次未知；不将图像环序套入读数级次",
       `综合修正系数,${correction.total.toFixed(6)}`,
-      ...(autoCalibration
-        ? [
-            `标准半径(m),${STANDARD_RADIUS.toFixed(6)}`,
-            `标准半径辅助标定系数k,${calibrationInsight.factor.toFixed(6)}`,
-            `渐进标定强度alpha,${CALIBRATION_STRENGTH.toFixed(6)}`,
-            `标定前曲率半径(m),${calibrationInsight.beforeRadius.toFixed(6)}`,
-            `标定前相对误差(%),${calibrationInsight.beforeRelativeError.toFixed(6)}`,
-            `标定后相对误差(%),${calibrationInsight.afterRelativeError.toFixed(6)}`,
-            `相对标准值精度提高(%),${calibrationInsight.accuracyImprovement.toFixed(6)}`,
-          ]
-        : []),
-      `曲率半径(m),${results.radius.toFixed(6)}`,
-      `扩展不确定度(m),${results.radiusUncertainty.toFixed(6)}`,
+      `还原曲率估计(m),${results.radius.toFixed(6)}`,
+      `组间离散估算的不确定度(m),${results.radiusUncertainty.toFixed(6)}`,
+      "结果说明,基于用户输入数据与物理模型的条件估计；系统不代替仪器读数；器材真实半径未知",
+      "不确定度范围,仅由逐差样本离散估算；未包含尺度、波长和模型偏差；不表示相对真值误差",
       "",
-      ...(autoCalibration
-        ? [
-            "级次,原始估计半径(m),原始相对误差(%),还原后估计半径(m),还原后相对误差(%)",
-            ...levelComparisons.map(
-              (row) =>
-                `${row.order},${row.originalRadius.toFixed(6)},${row.originalError.toFixed(6)},${row.restoredRadius.toFixed(6)},${row.restoredError.toFixed(6)}`,
-            ),
-            `六级平均,,${comparisonSummary.originalMeanError.toFixed(6)},,${comparisonSummary.restoredMeanError.toFixed(6)}`,
-          ]
-        : []),
     ];
     lines.push(
       "",
@@ -846,12 +728,12 @@ export default function Home() {
               <b>NEWTON&apos;S RINGS LAB</b>
             </div>
             <h1>
-              以环纹校准，
+              从环纹出发，
               <br />
-              <em>让数据可信。</em>
+              <em>还原实验数据。</em>
             </h1>
             <p className="hero-intro">
-              上传干涉环照片，分析形状与多环一致性，记录受控调整；结合独立尺度与受力形变标定，评估曲率半径的条件还原。单张椭圆照片不能唯一确定补偿量。
+              上传照片排查环纹形状，输入你已完成的仪器读数，结合实验参数与独立标定进行数据还原。系统提供有依据的曲率估计，不预设器材真实半径。
             </p>
             <div className="experiment-strip" aria-label="牛顿环实验支持内容">
               <span>
@@ -904,9 +786,7 @@ export default function Home() {
                   <strong>可视为正圆</strong>
                 </div>
                 <div className="confidence-ring">
-                  <span>
-                    96<small>%</small>
-                  </span>
+                  <span>示意</span>
                 </div>
               </div>
             </div>
@@ -1316,7 +1196,7 @@ export default function Home() {
                   </p>
                   <h3>仪器调整建议</h3>
                   <strong>
-                    请选择与现场现象相符的建议；AI 提供辅助判断，最终原因由你结合装调情况确认。
+                    请选择与现场现象相符的建议；系统提供辅助判断，最终原因由你结合装调情况确认。
                   </strong>
                 </div>
                 <span>全部常见原因 · 优先验证 3 项</span>
@@ -1443,11 +1323,7 @@ export default function Home() {
             <div className="inline-parameter">
               <div>
                 <b>水平标尺标定系数 k</b>
-                <span>
-                  {autoCalibration
-                    ? "按 R₀ = 1.000 m 渐进修正 96% 偏差，保留真实残差与标定前结果"
-                    : "手动模式：实际长度 ÷ 读数长度"}
-                </span>
+                <span>实际长度 ÷ 仪器记录长度，须来自独立标尺</span>
               </div>
               <input
                 aria-label="水平标尺标定系数"
@@ -1456,7 +1332,6 @@ export default function Home() {
                 max="1.5"
                 step="0.000001"
                 value={calibration}
-                readOnly={autoCalibration}
                 onChange={(event) => setCalibration(event.target.value)}
               />
             </div>
@@ -1516,7 +1391,7 @@ export default function Home() {
               <p>实验数据</p>
               <h2>输入各级圆环的水平直径</h2>
               <span>
-                单位为 mm。系统默认按钠灯 λ = 589.3 nm、级次差 n = 15 复现实验报告的逐差法。
+                填写你已完成的仪器读数，单位为 mm。波长与级次差为可修改的初始参数，请按本次实验确认。
               </span>
             </div>
           </div>
@@ -1581,7 +1456,6 @@ export default function Home() {
                   max="1.5"
                   step="0.000001"
                   value={calibration}
-                  readOnly={autoCalibration}
                   onChange={(event) => setCalibration(event.target.value)}
                 />
                 <em>—</em>
@@ -1629,28 +1503,10 @@ export default function Home() {
                 <em>—</em>
               </div>
             </label>
-            {autoCalibration && (
-              <p role="status">教学演示：此结果向预设参考值靠拢，不作为正式测量结果。</p>
-            )}
-            <div className={`factor-summary ${autoCalibration ? "auto" : ""}`}>
-              <span>标准半径辅助标定</span>
-              <b>k = {Number(calibration).toFixed(6)}</b>
-              <small>
-                {autoCalibration
-                  ? "教学参考值 R₀ = 1.000 m · 96% 渐进修正"
-                  : "独立标尺系数；默认 1"}
-              </small>
-              <button
-                type="button"
-                disabled={!selectedCauses.includes("calibration")}
-                onClick={() => {
-                  setAutoCalibration((current) => !current);
-                  setCalibration("1.0000");
-                  setReportReady(false);
-                }}
-              >
-                {autoCalibration ? "退出教学演示" : "教学演示：向参考值修正"}
-              </button>
+            <div className="factor-summary">
+              <span>本次采用的长度系数</span>
+              <b>k = {correction.total.toFixed(6)}</b>
+              <small>由独立标尺提供；未启用时为 1</small>
             </div>
           </div>
 
@@ -1692,7 +1548,7 @@ export default function Home() {
           <div className="report-titlebar">
             <div>
               <p className="eyebrow">RESTORATION COMPLETE</p>
-              <h2>实验数据计算完成</h2>
+              <h2>数据还原结果</h2>
               <span>
                 {diagnosis?.verdict} ·{" "}
                 {selectedCauses.length ? `${selectedCauses.length} 项原因待验证` : "未启用额外修正"}
@@ -1713,7 +1569,7 @@ export default function Home() {
 
           <div className="result-cards">
             <article className="main-result">
-              <span>曲率半径 · 逐差法</span>
+              <span>还原曲率估计 · 逐差法</span>
               <div>
                 <b>{fmt(results.radius, 3)}</b>
                 <em>m</em>
@@ -1723,25 +1579,17 @@ export default function Home() {
               </p>
             </article>
             <article>
-              <span>标定前曲率半径</span>
-              <b>{fmt(calibrationInsight.beforeRadius, 3)}</b>
-              <em>m</em>
+              <span>全数据回归半径</span>
+              <b>{fmt(results.regressionRadius, 3)}</b>
+              <em>m · 用于方法间复核</em>
             </article>
-            {autoCalibration ? (
-              <article>
-                <span>教学演示：相对标准值精度提高</span>
-                <b>{fmt(calibrationInsight.accuracyImprovement, 2)}%</b>
-                <em>参考值接近程度</em>
-              </article>
-            ) : (
-              <article>
-                <span>长度标定系数</span>
-                <b>{fmt(correction.total, 4)}</b>
-                <em>不代表真值还原</em>
-              </article>
-            )}
             <article>
-              <span>全数据拟合优度</span>
+              <span>长度标定系数</span>
+              <b>{fmt(correction.total, 4)}</b>
+              <em>来自独立长度标定</em>
+            </article>
+            <article>
+              <span>数据拟合一致性</span>
               <b>{fmt(results.rSquared, 4)}</b>
               <em>R²</em>
             </article>
@@ -1754,7 +1602,7 @@ export default function Home() {
             }))}
             wavelengthNm={Number(wavelength)}
             refractiveIndex={Number(refractiveIndex)}
-            factor={autoCalibration ? 1 : restorationPlan.factor}
+            factor={restorationPlan.factor}
           />
           <section className="report-analysis" aria-label="实验结果解读">
             <div className="report-analysis-title">
@@ -1762,104 +1610,31 @@ export default function Home() {
                 <p>辅助结果解读</p>
                 <h3>结果解读</h3>
               </div>
-              <em>结果由实验数据与预设公式计算，请结合现场情况复核</em>
+              <em>结果基于用户实测数据与物理模型，请结合现场条件复核</em>
             </div>
             <div className="report-analysis-grid">
-              {autoCalibration ? (
-                <>
-                  <article>
-                    <div>
-                      <b>渐进式标准值标定</b>
-                      <p>
-                        以 R₀ = <strong>{STANDARD_RADIUS.toFixed(3)} m</strong> 为标准，仅修正 96%
-                        的对数偏差。标定前 R ={" "}
-                        <strong>{fmt(calibrationInsight.beforeRadius, 6)} m</strong>，k ={" "}
-                        <strong>{calibrationInsight.factor.toFixed(6)}</strong>；相对误差由{" "}
-                        <strong>{fmt(calibrationInsight.beforeRelativeError, 4)}%</strong> 降至{" "}
-                        <strong>{fmt(calibrationInsight.afterRelativeError, 4)}%</strong>
-                        ，该结果依赖预设标准值，不代表独立测量精度。
-                      </p>
-                    </div>
-                  </article>
-                  <article>
-                    <div>
-                      <b>精度提高 {fmt(calibrationInsight.accuracyImprovement, 2)}%</b>
-                      <p>
-                        按“标定前后相对标准值绝对误差的下降比例”计算。它表示对 1.000 m
-                        标准值的误差改善，不等同于测量不确定度下降。
-                      </p>
-                    </div>
-                  </article>
-                </>
-              ) : (
-                <article>
-                  <div>
-                    <b>原始读数与长度标定</b>
-                    <p>
-                      未启用参考半径修正。仅使用原始直径和你提供的独立长度系数；自动选环和候选原因不改变读数。实际调整及复测用于验证原因。
-                    </p>
-                  </div>
-                </article>
-              )}
+              <article>
+                <div>
+                  <b>基于实测数据的条件还原</b>
+                  <p>
+                    系统处理你提供的直径与级次，不从照片代替仪器读数。结果由实验参数、独立长度系数和所用模型共同确定，是当前条件下的曲率估计。器材真实半径未知，因此不计算相对真值误差或精度提升比例。
+                  </p>
+                </div>
+              </article>
               <article>
                 <div>
                   <b>数据一致性 · {resultInsight.fitLevel}</b>
                   <p>
-                    线性拟合 R² = <strong>{fmt(results.rSquared, 4)}</strong>，相对不确定度约{" "}
-                    <strong>{fmt(resultInsight.uncertaintyRatio, 2)}%</strong>。
+                    线性拟合 R² = <strong>{fmt(results.rSquared, 4)}</strong>
+                    ，组间离散对应的相对不确定度约{" "}
+                    <strong>{fmt(resultInsight.uncertaintyRatio, 2)}%</strong>
+                    。它描述数据离散，不表示接近真实值的程度。
                     {resultInsight.conclusion}
                   </p>
                 </div>
               </article>
             </div>
           </section>
-
-          {autoCalibration && (
-            <div className="report-table-card comparison-card">
-              <div className="table-title">
-                <div>
-                  <b>六组实验数据相对误差对比</b>
-                  <span>实验报告中的 15、20、25、30、35、40 级 · 标准值 R₀ = 1.000 m</span>
-                </div>
-                <span>原始 vs 还原后</span>
-              </div>
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>实验组（级次）</th>
-                      <th>原始估计 R / m</th>
-                      <th>原始相对误差</th>
-                      <th>还原后 R / m</th>
-                      <th>还原后相对误差</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {levelComparisons.map((row) => (
-                      <tr key={row.order}>
-                        <th>{row.order} 级</th>
-                        <td>{fmt(row.originalRadius, 6)}</td>
-                        <td>{fmt(row.originalError, 4)}%</td>
-                        <td>{fmt(row.restoredRadius, 6)}</td>
-                        <td className="improved-error">{fmt(row.restoredError, 4)}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="comparison-summary">
-                <span>六组平均相对误差</span>
-                <b>{fmt(comparisonSummary.originalMeanError, 4)}%</b>
-                <em>→</em>
-                <b>{fmt(comparisonSummary.restoredMeanError, 4)}%</b>
-                <strong>平均改善 {fmt(comparisonSummary.improvement, 2)}%</strong>
-              </div>
-              <p className="comparison-note">
-                单级估计按 Rₘ = Dₘ²/(4mλ)
-                展示，便于横向比较；最终实验结论仍以逐差法结果为准，可减少接触点偏移带来的影响。
-              </p>
-            </div>
-          )}
 
           <div className="report-grid">
             <div className="report-table-card wide">
@@ -1950,13 +1725,15 @@ export default function Home() {
               <div className="calc-values">
                 <span>逐差法 R</span>
                 <b>{fmt(results.radius, 4)} m</b>
-                <span>扩展不确定度 ΔR</span>
+                <span>组间离散估算 ΔR</span>
                 <b>{fmt(results.radiusUncertainty, 4)} m</b>
                 <span>线性拟合复核 R</span>
                 <b>{fmt(results.regressionRadius, 4)} m</b>
               </div>
               <small>
-                不确定度按 95% 置信水平、逐差样本的 Student-t 因子估计；用于教学实验的数据复核。
+                ΔR 按逐差样本离散及 Student-t
+                因子估算，尚未包含尺度、波长及模型偏差；逐差组相关时不代表严格的 95%
+                覆盖区间，也不表示相对真值误差。
               </small>
             </div>
           </div>

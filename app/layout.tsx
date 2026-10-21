@@ -10,18 +10,19 @@ export async function generateMetadata(): Promise<Metadata> {
   const origin = `${protocol}://${host}`;
   const socialImage = `${origin}/og.png`;
   return {
-    title: "环真｜牛顿环智能校准实验工具",
-    description: "上传牛顿环照片，判断正圆或椭圆，复核误差原因，并按逐差法还原实验数据与曲率半径。",
+    title: "环真｜牛顿环数据还原工具",
+    description:
+      "分析牛顿环照片中的形状，处理用户输入的实测数据，基于物理模型提供条件性的曲率估计。",
     openGraph: {
-      title: "环真｜以环纹校准，让数据可信",
+      title: "环真｜从环纹出发，还原实验数据",
       description: "面向高校物理实验的牛顿环图像判断、复合还原与报告输出工具。",
       type: "website",
       url: origin,
-      images: [{ url: socialImage, width: 1730, height: 909, alt: "环真牛顿环智能校准工具" }],
+      images: [{ url: socialImage, width: 1730, height: 909, alt: "环真牛顿环数据还原工具" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "环真｜牛顿环智能校准实验工具",
+      title: "环真｜牛顿环数据还原工具",
       description: "判断圆或椭圆，复合还原实验数据。",
       images: [socialImage],
     },

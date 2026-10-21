@@ -31,9 +31,9 @@ test("server-renders the huanzhen Newton rings homepage", async () => {
 
   const html = await response.text();
   assert.doesNotMatch(html, developmentPreviewMeta);
-  assert.match(html, /<title>环真｜牛顿环智能校准实验工具<\/title>/i);
-  assert.match(html, /以环纹校准/);
-  assert.match(html, /让数据可信/);
+  assert.match(html, /<title>环真｜牛顿环数据还原工具<\/title>/i);
+  assert.match(html, /从环纹出发/);
+  assert.match(html, /还原实验数据/);
   assert.match(html, /开始分析/);
 });
 
@@ -52,13 +52,14 @@ test("ships diagnosis, retest, and report interpretation", async () => {
   assert.match(analysis, /Scores order checks/);
   assert.match(page, /按建议调整，重新拍照/);
   assert.match(page, /辅助结果解读/);
-  assert.match(page, /相对标准值精度提高/);
-  assert.match(analysis, /STANDARD_RADIUS = 1\.0/);
-  assert.match(analysis, /CALIBRATION_STRENGTH = 0\.96/);
-  assert.match(page, /六组实验数据相对误差对比/);
-  assert.match(page, /不代表独立测量精度/);
+  assert.doesNotMatch(
+    page + analysis,
+    /STANDARD_RADIUS|CALIBRATION_STRENGTH|autoCalibration|accuracyImprovement|beforeRelativeError|afterRelativeError/,
+  );
+  assert.match(page, /不从照片代替仪器读数/);
+  assert.match(page, /器材真实半径未知/);
   assert.match(css, /\.ai-advice-heading h3/);
-  assert.match(layout, /环真｜牛顿环智能校准实验工具/);
+  assert.match(layout, /环真｜牛顿环数据还原工具/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(page, /SkeletonPreview/);
 });

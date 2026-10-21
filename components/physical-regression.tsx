@@ -32,7 +32,8 @@ export default function PhysicalRegressionPanel({
           权重减少异常读数的影响，保留原始数据；不按标准半径倒算修正。
         </p>
         <p>
-          间隙折射率 n = {refractiveIndex}（使用实验参数）。教学演示的标准值倒算系数不用于本回归。
+          间隙折射率 n = {refractiveIndex}
+          （使用实验参数）。结果基于用户输入数据及独立长度系数，不预设器材真实半径。
         </p>
         {error && <p role="status">{error}</p>}
         {result && (
