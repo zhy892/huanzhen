@@ -1,8 +1,10 @@
 import type { RingSelection } from "./auto-rings.ts";
+import type { ForceCalibration } from "./force-calibration.ts";
 export type Observation = {
   ratio: number; angle: number; centerOffset: number; clarity: number;
   asymmetry: number; fitQuality: number; confidence: number; damaged: boolean;
   ringSelection?: RingSelection;
+  fitValidation?: import("./subpixel-ring.ts").FitValidation;
 };
 export type Reading = { order: number; diameter: number };
 export type Profile = {
@@ -13,6 +15,7 @@ export type Profile = {
 };
 export type Sample = { contentHash?: string; reused?: boolean; id: string; image: Blob; metrics: Observation; name: string };
 export type Round = {
+  restorationExecution?: { selectedCauses: string[]; lengthFactor: number; steps: import('./restoration-plan.ts').RestorationStep[] };
   algorithmVersion?: string; id: string; time: string; action: string; operation: string; confounds: string;
   samples: Sample[]; readings: Reading[]; recommendation: Recommendation;
 };
@@ -24,7 +27,7 @@ export type Residual = {
 };
 export type Declaration = { measurementRevision?: number; ruleVersion?: string; id: string; time: string; roundIds: string[]; result: Residual };
 export type Restoration = { time: string; declarationId: string; tier: 'restored' | 'bounded' | 'unavailable'; reason: string; before?: number; after?: number; amount?: number; uncertainty?: number };
-export type Session = { measurementRevision?: number; revision?: number; version: 1; id: string; created: string; profile: Profile; rounds: Round[]; declarations: Declaration[]; restorations: Restoration[] };
+export type Session = { forceCalibration?: ForceCalibration; measurementRevision?: number; revision?: number; version: 1; id: string; created: string; profile: Profile; rounds: Round[]; declarations: Declaration[]; restorations: Restoration[] };
 
 export function mean(values: number[]) { return values.reduce((a, b) => a + b, 0) / values.length; }
 export function deviation(values: number[]) {
@@ -150,3 +153,4 @@ export function restore(session: Session): Restoration {
   const uncertainty = 2 * Math.hypot(measured.expanded / 2 * k * k, 2 * measured.radius * k * p.factorUncertainty);
   return { ...base, tier: 'bounded', before: measured.radius, after, amount: after - measured.radius, uncertainty, reason: '仅按独立长度标定进行条件性补偿；未补偿图像形状残余。扩展不确定度 k=2，尚未包含波长、相关读数及模型失配，不能宣称完整还原。' };
 }
+

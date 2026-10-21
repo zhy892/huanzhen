@@ -4,12 +4,15 @@ import { initializeEllipse } from "./ellipse.ts";
 import { selectAutomaticRings } from "./auto-rings.ts";
 import type { RingSelection } from "./auto-rings.ts";
 import { assessFit } from "./fit-quality.ts";
+import { refineSubpixelRing } from "./subpixel-ring.ts";
+import type { FitValidation } from "./subpixel-ring.ts";
 import type { FitStatus } from "./fit-quality.ts";
 import type { Ellipse } from "./ellipse.ts";
-export type CauseId = "tilt" | "pressure" | "decenter" | "calibration" | "damage";
+export type CauseId = "tilt" | "pressure" | "decenter" | "calibration" | "damage" | "focus" | "illumination" | "distortion";
 export type Mode = "empirical" | "deepseek";
 
 export type ImageMetrics = {
+  fitValidation?: FitValidation;
   ratio: number;
   angle: number;
   centerOffset: number;
@@ -63,9 +66,9 @@ export const CAUSES: Array<{
   {
     id: "tilt",
     index: "01",
-    title: "光轴或观察面倾斜",
+    title: "观察方向倾斜或斜拍",
     short: "投影压缩",
-    description: "环像沿倾斜方向被压缩，通常表现为轮廓完整、长短轴稳定的椭圆。",
+    description: "观察投影与透视可能使圆环成为椭圆；器件间隙的纯线性倾斜主要使环心移动。",
     advice: "微调反射镜、显微镜或相机姿态，使观察光轴尽量垂直于牛顿环平面，并让十字线穿过环心。",
     formula: "q = b/a；原因未独立验证时不作投影补偿",
   },
@@ -101,10 +104,14 @@ export const CAUSES: Array<{
     index: "!",
     title: "仪器或光学元件明显损坏",
     short: "不可还原",
-    description: "若条纹断裂、严重畸变或成像无法形成闭合轮廓，经验模型不能给出可信还原。",
+    description: "实物划伤、崩边等可能改变成像；条纹裁切、遮挡或低质量本身不能证明元件损坏。",
     advice: "停止测量，检查光源、透镜划伤或崩边、接触面污染和显微镜成像；必要时更换仪器后重新拍照。",
     formula: "停止还原并检修仪器",
   },
+  {"id": "focus", "index": "06", "title": "成像清晰度与局部干扰", "short": "成像复核", "description": "十字丝正常存在，少量灰尘也很常见；算法会屏蔽十字丝邻域并剔除孤立异常点。只有剩余条纹证据不足时，才进一步排查失焦、抖动或严重遮挡。", "advice": "先核对拟合是否沿同一条暗纹。若有效弧段不足或残差明显，再固定相机、检查对焦与照明并复拍；无需为了正常十字丝反复调整器件。", "formula": "十字丝屏蔽 + 切向中位数 + 鲁棒拟合 + 分区留出检验"},
+  {"id": "illumination", "index": "07", "title": "照明不均与反光", "short": "照明影响", "description": "亮度梯度、局部反光和过曝会偏移暗纹极小值。", "advice": "改变照明或遮挡杂散光，避免过曝，保持器件设置不变复拍。", "formula": "比较分区对比度与暗纹位置"},
+  {"id": "distortion", "index": "09", "title": "镜头畸变与屏幕斜拍", "short": "成像畸变", "description": "镜头径向畸变、屏幕翻拍和透视可改变不同位置的环形。", "advice": "用标定板或已知矩形平面获取独立相机标定，换角度复拍对比。", "formula": "需独立相机内参与平面映射后逐点重拟合"},
+
 ];
 
 export const DEMO_DATA: Record<number, string> = {
@@ -156,41 +163,22 @@ export function constrainDiagnosis(metrics:ImageMetrics, diagnosis:AiDiagnosis):
   return {...diagnosis,verdict:local.verdict,causes:diagnosis.causes.filter(id=>local.causes.includes(id)),confidence:Math.min(diagnosis.confidence,metrics.confidence),summary:local.summary+" "+scope};
 }
 
-export function buildAiSuggestions(metrics: ImageMetrics, diagnosis: AiDiagnosis) {
-  const modelBoost = (id: CauseId) => diagnosis.causes.includes(id) ? 18 : 0;
-  const rawScores: Record<CauseId, number> = {
-    tilt: 12 + (1 - metrics.ratio) * 360 + (metrics.asymmetry < 0.34 ? 13 : 3) + modelBoost("tilt"),
-    pressure: 7 + metrics.asymmetry * 130 + (1 - metrics.ratio) * 160 + modelBoost("pressure"),
-    decenter: 6 + metrics.centerOffset * 260 + modelBoost("decenter"),
-    calibration: 8 + (1 - metrics.ratio) * 110 + (Math.abs(metrics.angle) < 12 ? 10 : 3) + modelBoost("calibration"),
-    damage: 3 + (1 - metrics.fitQuality) * 65 + (1 - metrics.clarity) * 28 + (metrics.damaged ? 45 : 0) + modelBoost("damage"),
+export function buildAiSuggestions(metrics: ImageMetrics, _diagnosis: AiDiagnosis) {
+  // Scores order checks, not calibrated causal probabilities. Every cause stays visible.
+  const weak=metrics.damaged || metrics.fitStatus==='review', ellipse=metrics.ratio<.99;
+  const inconsistent=metrics.ringSelection?.consistency==='inconsistent';
+  const details: Record<CauseId, {score:number;status:string;evidence:string}> = {
+    tilt:{score:ellipse?75:25,status:ellipse?'可能相关':'当前支持较弱',evidence:`q=${metrics.ratio.toFixed(4)}；观察投影可产生椭圆，器件的纯间隙倾斜主要移动环心。需改变相机方向验证。`},
+    pressure:{score:inconsistent?80:ellipse?55:25,status:inconsistent?'优先验证':ellipse?'可能相关':'尚不能排除',evidence:`${metrics.ringSelection?.checkedRingCount??0} 条环复核；多环轴比差 ${(100*(metrics.ringSelection?.ratioSpread??0)).toFixed(2)} 个百分点。各向同性受力也可能保持圆形，需受控调整与独立参考。`},
+    decenter:{score:35,status:'需现场验证',evidence:`取景中心偏移 ${(100*metrics.centerOffset).toFixed(1)}%；未确定真实读数轴，不能从取景偏移直接推断弦长误差。`},
+    calibration:{score:ellipse?65:30,status:ellipse?'可能相关':'需独立标定',evidence:'横纵像素比例与真实尺度无法仅凭一张环图分离；用标准刻尺复核。'},
+    damage:{score:10,status:'无法凭本图确认',evidence:'低拟合质量不是物理损坏证据；需要实物检查划痕、崩边或独立复测。'},
+    focus:{score:weak?82:20,status:weak?'建议复核':'常规干扰已处理',evidence:`暗纹定位 RMS=${metrics.fitResidualPx?.toFixed(2)??'未知'} px；有效角向支持 ${Math.round((metrics.fitObservedFraction??0)*100)}%。十字丝正常存在，灰尘常见；裁切、宽纹与失焦不能仅凭此区分。先检查剔除干扰后的剩余条纹证据。`},
+    illumination:{score:metrics.asymmetry>.25?78:40,status:metrics.asymmetry>.25?'优先验证':'可能相关',evidence:`四象限明暗不对称指标 ${metrics.asymmetry.toFixed(3)}，裁切也会改变该指标。`},
+    distortion:{score:ellipse||inconsistent?62:30,status:ellipse||inconsistent?'可能相关':'需独立标定',evidence:`${metrics.detectedScreen?'检测到暖色成像区域，存在屏幕翻拍可能。':'尚未确定相机与器件几何关系。'}需标定板区分透视、比例和镜头畸变。`},
   };
-  const eligible = metrics.damaged ? [] : CAUSES.filter(c=>builtinDiagnosis(metrics).causes.includes(c.id));
-  const totalScore = eligible.reduce((sum, cause) => sum + Math.max(0.01, rawScores[cause.id]), 0);
-  const shares = eligible.map((cause, index) => {
-    const exact = (Math.max(0.01, rawScores[cause.id]) / totalScore) * 100;
-    return { cause, index, exact, probability: Math.floor(exact) };
-  });
-  let remainder = 100 - shares.reduce((sum, item) => sum + item.probability, 0);
-  [...shares]
-    .sort((a, b) => (b.exact - b.probability) - (a.exact - a.probability) || a.index - b.index)
-    .forEach((item) => {
-      if (remainder <= 0) return;
-      item.probability += 1;
-      remainder -= 1;
-    });
-  const ranked = shares
-    .map(({ cause, probability }) => ({ ...cause, probability }))
-    .sort((a, b) => b.probability - a.probability);
-  const recommendedIds = new Set<CauseId>(
-    metrics.damaged
-      ? []
-      : ranked
-        .filter((item) => item.id !== "damage" && diagnosis.causes.includes(item.id))
-        .slice(0, MAX_RECOMMENDED_CAUSES)
-        .map((item) => item.id),
-  );
-  return ranked.map((item) => ({ ...item, recommended: recommendedIds.has(item.id) }));
+  return CAUSES.map(c=>({...c,probability:details[c.id].score,...details[c.id],recommended:false}))
+    .sort((a,b)=>b.score-a.score).map((c,i)=>({...c,recommended:i<MAX_RECOMMENDED_CAUSES && c.id!=='damage'}));
 }
 
 function longestRun(input: boolean[]) {
@@ -475,6 +463,17 @@ export async function inspectImage(file: File, annotate = true): Promise<ImageMe
       const fine=finePoints?robustEllipseFromRing(finePoints,width,height):null;
       if(fine && Math.abs(fine.fit.ratio-robustAutoFit.fit.ratio)<.06 && Math.hypot(fine.fit.centerX-robustAutoFit.fit.centerX,fine.fit.centerY-robustAutoFit.fit.centerY)<5 && Math.abs(fine.fit.semiMajor/robustAutoFit.fit.semiMajor-1)<.05 && fine.rms<=Math.max(1,robustAutoFit.rms*1.2)) {const evidence=measureRingEvidence(blurred,width,height,{x0,x1,y0,y1},fine.fit,guideMask,Math.max(3,q92*.1));if(evidence.fraction>=MIN_DARK_BAND_SUPPORT && evidence.fraction>=fitEvidence.fraction-.05){tracked=finePoints!;robustAutoFit=fine;fitEvidence=evidence;}}
     }
+    let fitValidation:FitValidation|undefined;
+    if(robustAutoFit){
+      const proposal=refineSubpixelRing(blurred,width,height,{x0,x1,y0,y1},robustAutoFit.fit,guideMask);
+      if(proposal){
+        fitValidation=proposal.validation;
+        const evidence=measureRingEvidence(blurred,width,height,{x0,x1,y0,y1},proposal.fit,guideMask,Math.max(3,q92*.1));
+        const verified=robustEllipseFromRing(proposal.points,width,height);
+        if(proposal.validation.adopted&&verified&&evidence.fraction>=MIN_DARK_BAND_SUPPORT&&evidence.fraction>=fitEvidence.fraction-.025){tracked=proposal.points;robustAutoFit=verified;fitEvidence=evidence;}
+        else fitValidation={...fitValidation,adopted:false};
+      }
+    }
     if(!robustAutoFit) throw new Error("可见暗纹不足以支持可靠曲线，请改善对焦或取景后重拍。");
     const result= {fit:robustAutoFit!.fit,rms:robustAutoFit!.rms,coverage:robustAutoFit!.coverage,inliers:robustAutoFit!.inliers};
     const {centerX,centerY,semiMajor,semiMinor,ratio,angle}=result.fit;
@@ -533,7 +532,7 @@ export async function inspectImage(file: File, annotate = true): Promise<ImageMe
     context.restore();
     const annotatedImage = annotate ? canvas.toDataURL("image/jpeg", 0.9) : "";
 
-    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, fitEvidence, fitStatus:assessment.status,fitWarnings:assessment.warnings,fitObservedFraction,ellipse:!showEllipse?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:"dark-centerline",ringSelection:{...automatic.selection,scaleFraction:Math.sqrt(semiMajor*semiMinor)/Math.min(x1-x0,y1-y0)} };
+    return { ratio, angle, centerOffset, clarity, asymmetry, fitQuality, confidence, damaged, annotatedImage, fitMethod, detectedScreen, fitResidualPx, fitCoverage, fitInlierFraction, fitEvidence, fitValidation, fitStatus:assessment.status,fitWarnings:assessment.warnings,fitObservedFraction,ellipse:!showEllipse?undefined:{...result.fit,imageWidth:width,imageHeight:height},contourPoints:tracked.map((point,i)=>({x:point.x/width,y:point.y/height,inlier:accepted.has(i)})),processingMs:performance.now()-started, contourKind:"dark-centerline",ringSelection:{...automatic.selection,scaleFraction:Math.sqrt(semiMajor*semiMinor)/Math.min(x1-x0,y1-y0)} };
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -542,3 +541,4 @@ export async function inspectImage(file: File, annotate = true): Promise<ImageMe
 export function calculationT(n: number) {
   return ({ 2: 12.706, 3: 4.303, 4: 3.182, 5: 2.776, 6: 2.571 } as Record<number, number>)[n] || 1.96;
 }
+

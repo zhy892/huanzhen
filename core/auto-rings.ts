@@ -135,7 +135,7 @@ function searchRingView(
     );
   }
   let rings = rank();
-  // Machine-generated seeds search additional radial bands, including outer
+  // Additional search seeds cover other radial bands, including outer
   // fringes when the central dark spot is absent. These are not user clicks.
   if (rings.length < 2 || !rings[0]?.usable) {
     const seeds: RingPoint[] = [];
@@ -301,3 +301,4 @@ export function selectAutomaticRings(
     size,
   );
 }
+

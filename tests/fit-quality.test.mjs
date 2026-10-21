@@ -49,9 +49,10 @@ test("poor image evidence is not diagnosed as physical instrument damage", () =>
   const diagnosis = builtinDiagnosis(metrics);
   assert.equal(diagnosis.verdict, "拟合待复核");
   assert.deepEqual(diagnosis.causes, []);
-  assert.ok(
-    buildAiSuggestions(metrics, diagnosis).every((c) => !c.recommended),
-  );
+  const suggestions=buildAiSuggestions(metrics, diagnosis);
+  assert.ok(suggestions.find(c=>c.id==='focus').recommended);
+  assert.equal(suggestions.find(c=>c.id==='damage').recommended,false);
+  assert.equal(suggestions.find(c=>c.id==='damage').status,'无法凭本图确认');
 });
 
 test("sparse distributed arcs need independent dark-band evidence and remain review-only", () => {
@@ -99,3 +100,4 @@ test("sparse distributed arcs need independent dark-band evidence and remain rev
     "unreliable",
   );
 });
+

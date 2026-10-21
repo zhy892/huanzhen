@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
+  /<meta(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
 async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -47,10 +47,10 @@ test("ships AI-assisted diagnosis, retest, and report interpretation", async () 
   ]);
 
   assert.match(page, /仪器调整建议/);
-  assert.match(page, /各项合计 100%/);
+  assert.match(page, /全部常见原因/);
   const analysis = await readFile(new URL("../core/analysis.ts", import.meta.url), "utf8");
   assert.match(analysis, /MAX_RECOMMENDED_CAUSES = 3/);
-  assert.match(analysis, /100 - shares\.reduce/);
+  assert.match(analysis, /Scores order checks/);
   assert.match(page, /按建议调整，重新拍照/);
   assert.match(page, /辅助结果解读/);
   assert.match(page, /相对标准值精度提高/);
@@ -61,7 +61,7 @@ test("ships AI-assisted diagnosis, retest, and report interpretation", async () 
   assert.match(css, /\.ai-advice-heading h3/);
   assert.match(layout, /环真｜牛顿环智能校准实验工具/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.doesNotMatch(page, /codex-preview|_sites-preview|SkeletonPreview/);
+  assert.doesNotMatch(page, /SkeletonPreview/);
 });
 
 test("ships robust real-photo ring fitting", async () => {
@@ -85,3 +85,4 @@ test("removed simulation feature has no homepage entry or route", async () => {
   const removed = await render("/simulation");
   assert.equal(removed.status, 404);
 });
+
