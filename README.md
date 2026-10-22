@@ -62,7 +62,7 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 `deployment.config.json` 中的 `d1`、`r2` 默认为 `null`；基础图像分析和浏览器实验记录不依赖这些服务。启用可选存储时，需要先创建生产资源并配置真实绑定。示例数据库配置只用于本地开发。
 
-可选 DeepSeek 特征复核在服务端读取 `DEEPSEEK_API_KEY`。接口只接收量化特征，未配置时使用本地规则。密钥放在环境变量或部署平台的机密配置中，不提交仓库。文件监听不正常的环境可设置 `WATCH_POLLING=true`。
+图像特征提取、环纹拟合与原因排查均在浏览器本地完成，无需外部分析接口。文件监听不正常的环境可设置 `WATCH_POLLING=true`。
 
 ## 数据与计算边界
 

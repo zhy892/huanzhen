@@ -17,7 +17,6 @@ export type CauseId =
   | "focus"
   | "illumination"
   | "distortion";
-export type Mode = "empirical" | "deepseek";
 
 export type ImageMetrics = {
   fitValidation?: FitValidation;
@@ -51,7 +50,7 @@ export type AiDiagnosis = {
   summary: string;
   causes: CauseId[];
   confidence: number;
-  provider?: "deepseek" | "local-fallback" | "empirical";
+  provider?: "empirical";
 };
 
 export type FitPoint = { x: number; y: number };

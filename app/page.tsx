@@ -12,7 +12,6 @@ import { physicalRegression } from "../core/physical-regression";
 import PhysicalRegressionPanel from "../components/physical-regression";
 import {
   CauseId,
-  Mode,
   ImageMetrics,
   AiDiagnosis,
   ORDERS,
@@ -23,7 +22,6 @@ import {
   fmt,
   builtinDiagnosis,
   buildAiSuggestions,
-  constrainDiagnosis,
   inspectImage,
   calculationT,
 } from "../core/analysis";
@@ -47,7 +45,6 @@ export default function Home() {
     }
   }
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
-  const [mode, setMode] = useState<Mode>("empirical");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string>("");
   const [metrics, setMetrics] = useState<ImageMetrics | null>(null);
@@ -366,31 +363,7 @@ export default function Home() {
     setThinking("analysis");
     try {
       const measured = await inspectImage(chosenFile);
-      let nextDiagnosis = builtinDiagnosis(measured);
-      if (mode === "deepseek" && !measured.damaged) {
-        const response = await fetch("/api/deepseek", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            metrics: {
-              ratio: measured.ratio,
-              angle: measured.angle,
-              centerOffset: measured.centerOffset,
-              clarity: measured.clarity,
-              asymmetry: measured.asymmetry,
-              fitQuality: measured.fitQuality,
-              confidence: measured.confidence,
-              damaged: measured.damaged,
-              ringSelection: measured.ringSelection,
-            },
-          }),
-        });
-        const payload = (await response.json()) as AiDiagnosis & { error?: string };
-        if (!response.ok) throw new Error(payload.error || "增强诊断暂时没有返回结果");
-        nextDiagnosis = constrainDiagnosis(measured, payload);
-      } else {
-        await wait(900);
-      }
+      const nextDiagnosis = builtinDiagnosis(measured);
       try {
         const samples: Sample[] = [];
         const sources = chosenBatch.length ? chosenBatch : [chosenFile];
@@ -578,7 +551,6 @@ export default function Home() {
     }
     if (preview) URL.revokeObjectURL(preview);
     setStep(0);
-    setMode("empirical");
     setFile(null);
     setPreview("");
     setMetrics(null);
@@ -991,46 +963,15 @@ export default function Home() {
                 已选 {batchFiles.length || (file ? 1 : 0)} 张 ·
                 同设置可选择多张，分别保存用于重复性检验
               </p>
-              <p className="field-label">选择分析方式</p>
-              <button
-                className={`mode-card ${mode === "empirical" ? "selected" : ""}`}
-                type="button"
-                onClick={() => {
-                  setMode("empirical");
-                  setError("");
-                }}
-              >
+              <p className="field-label">分析方式</p>
+              <div className="mode-card selected">
                 <span className="mode-symbol">ƒ</span>
                 <span>
-                  <b>经验模型</b>
-                  <small>本地特征提取 + 实验公式</small>
+                  <b>本地图像分析</b>
+                  <small>在浏览器中提取特征并拟合环纹，无需外部接口</small>
                 </span>
-                <i>{mode === "empirical" ? "✓" : ""}</i>
-              </button>
-              <button
-                className={`mode-card ${mode === "deepseek" ? "selected deepseek" : ""}`}
-                type="button"
-                onClick={() => {
-                  setMode("deepseek");
-                  setError("");
-                }}
-              >
-                <span className="mode-symbol ds">DS</span>
-                <span>
-                  <b>DeepSeek 增强 · 免密钥</b>
-                  <small>站点代理复核，用户无需配置</small>
-                </span>
-                <i>{mode === "deepseek" ? "✓" : ""}</i>
-              </button>
-              {mode === "deepseek" && (
-                <div className="managed-ai-note">
-                  <span>✓</span>
-                  <p>
-                    <b>无需输入任何密钥</b>
-                    <small>只提交长短轴比、偏心等量化特征，不上传原始照片。</small>
-                  </p>
-                </div>
-              )}
+                <i>✓</i>
+              </div>
               <div className="tip-card">
                 <b>连续环边追踪与椭圆拟合</b>
                 <p>
@@ -1176,13 +1117,7 @@ export default function Home() {
                 )}
               </div>
               <small className="mode-note">
-                {metrics.damaged
-                  ? "轮廓待复核，仍列出完整原因排查与可能项"
-                  : mode === "deepseek"
-                    ? diagnosis.provider === "deepseek"
-                      ? "DeepSeek V4 Flash 已基于量化特征完成复核"
-                      : "增强服务未配置或不可用，已采用本地诊断"
-                    : "经验模型已完成本地分析"}
+                {metrics.damaged ? "轮廓待复核，仍列出完整原因排查与可能项" : "已完成本地图像分析"}
               </small>
             </div>
           </div>
@@ -1307,12 +1242,7 @@ export default function Home() {
                   <b>{diagnosticDetail.restorationTitle}</b>
                   <p>{diagnosticDetail.restorationText}</p>
                   <small>
-                    {"自动多环筛选与轮廓复核"} ·{" "}
-                    {metrics.damaged
-                      ? "待复核轮廓"
-                      : mode === "deepseek"
-                        ? "DeepSeek 特征复核"
-                        : "经验公式判断"}
+                    {"自动多环筛选与轮廓复核"} · {metrics.damaged ? "待复核轮廓" : "本地图像分析"}
                   </small>
                 </div>
               </div>
@@ -1391,7 +1321,8 @@ export default function Home() {
               <p>实验数据</p>
               <h2>输入各级圆环的水平直径</h2>
               <span>
-                填写你已完成的仪器读数，单位为 mm。波长与级次差为可修改的初始参数，请按本次实验确认。
+                填写你已完成的仪器读数，单位为
+                mm。波长与级次差为可修改的初始参数，请按本次实验确认。
               </span>
             </div>
           </div>
@@ -1755,29 +1686,13 @@ export default function Home() {
 
       {thinking && (
         <div className="thinking-overlay" role="status" aria-live="polite">
-          <div
-            className={`thinking-card ${mode === "deepseek" && thinking === "analysis" ? "ds-thinking" : ""}`}
-          >
-            {mode === "deepseek" && thinking === "analysis" ? (
-              <div className="ds-orb">
-                DS
-                <span />
-                <span />
-              </div>
-            ) : (
-              <div className="orbit-loader">
-                <i />
-                <i />
-                <i />
-              </div>
-            )}
-            <p>
-              {mode === "deepseek" && thinking === "analysis"
-                ? "正在请求 DeepSeek 复核"
-                : thinking === "analysis"
-                  ? "模型正在分析圆环"
-                  : "模型正在还原数据"}
-            </p>
+          <div className="thinking-card">
+            <div className="orbit-loader">
+              <i />
+              <i />
+              <i />
+            </div>
+            <p>{thinking === "analysis" ? "正在分析圆环" : "正在还原数据"}</p>
             <span>
               {thinking === "analysis"
                 ? "提取轮廓、长短轴、偏心与清晰度"
