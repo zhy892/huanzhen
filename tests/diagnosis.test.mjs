@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CAUSES, buildAiSuggestions, builtinDiagnosis } from "../core/analysis.ts";
+import { CAUSES, buildCauseSuggestions, builtinDiagnosis } from "../core/analysis.ts";
 const base = {
   ratio: 0.95,
   angle: 0,
@@ -25,7 +25,7 @@ for (const [name, patch] of [
 ])
   test(`all common causes stay visible for ${name}`, () => {
     const m = { ...base, ...patch },
-      s = buildAiSuggestions(m, builtinDiagnosis(m));
+      s = buildCauseSuggestions(m, builtinDiagnosis(m));
     assert.equal(s.length, CAUSES.length);
     assert.equal(new Set(s.map((c) => c.id)).size, CAUSES.length);
     assert.ok(s.every((c) => c.evidence && c.advice && c.status));

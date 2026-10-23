@@ -1,4 +1,5 @@
 import type { Session } from "../core/experiment";
+import { SOFTWARE_NAME, SOFTWARE_VERSION } from "../core/software";
 const DB_NAME = "huanzhen-experiments";
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -73,9 +74,18 @@ export async function exportSession(session: Session) {
       ),
     })),
   );
-  const blob = new Blob([JSON.stringify({ ...session, rounds }, null, 2)], {
-    type: "application/json",
-  });
+  const blob = new Blob(
+    [
+      JSON.stringify(
+        { ...session, software: { name: SOFTWARE_NAME, version: SOFTWARE_VERSION }, rounds },
+        null,
+        2,
+      ),
+    ],
+    {
+      type: "application/json",
+    },
+  );
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

@@ -1,4 +1,6 @@
 "use client";
+import { SOFTWARE_TITLE, SOFTWARE_VERSION, RESULT_SCOPE } from "../core/software";
+import { captureReport, validateReportInput } from "../core/report-snapshot";
 
 import type { Session, Round, Sample } from "../core/experiment";
 import { recommend } from "../core/experiment";
@@ -13,7 +15,7 @@ import PhysicalRegressionPanel from "../components/physical-regression";
 import {
   CauseId,
   ImageMetrics,
-  AiDiagnosis,
+  Diagnosis,
   ORDERS,
   CAUSES,
   DEMO_DATA,
@@ -21,7 +23,7 @@ import {
   wait,
   fmt,
   builtinDiagnosis,
-  buildAiSuggestions,
+  buildCauseSuggestions,
   inspectImage,
   calculationT,
 } from "../core/analysis";
@@ -48,7 +50,7 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string>("");
   const [metrics, setMetrics] = useState<ImageMetrics | null>(null);
-  const [diagnosis, setDiagnosis] = useState<AiDiagnosis | null>(null);
+  const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
   const [selectedCauses, setSelectedCauses] = useState<CauseId[]>([]);
   const [thinking, setThinking] = useState<"analysis" | "restore" | null>(null);
   const [error, setError] = useState("");
@@ -158,6 +160,9 @@ export default function Home() {
     }),
     [restorationPlan],
   );
+  useEffect(() => {
+    setReportReady(false);
+  }, [values, wavelength, refractiveIndex, interval, correction.total]);
 
   const diagnosticDetail = useMemo(() => {
     if (!metrics || !diagnosis) return null;
@@ -218,9 +223,9 @@ export default function Home() {
     };
   }, [metrics, diagnosis, selectedCauses]);
 
-  const aiSuggestions = useMemo(() => {
+  const causeSuggestions = useMemo(() => {
     if (!metrics || !diagnosis) return [];
-    return buildAiSuggestions(metrics, diagnosis);
+    return buildCauseSuggestions(metrics, diagnosis);
   }, [metrics, diagnosis]);
 
   const results = useMemo(() => {
@@ -437,7 +442,7 @@ export default function Home() {
       setMetrics(measured);
       setDiagnosis(nextDiagnosis);
       setSelectedCauses(
-        buildAiSuggestions(measured, nextDiagnosis)
+        buildCauseSuggestions(measured, nextDiagnosis)
           .filter((item) => item.recommended)
           .map((item) => item.id),
       );
@@ -493,9 +498,19 @@ export default function Home() {
       setError("独立长度系数须在 0.5–1.5 之间；未标定时请保持 1。");
       return;
     }
-    const validCount = ORDERS.filter((order) => Number(values[order]) > 0).length;
-    if (validCount < 6) {
-      setError("请至少填写 6 组有效直径；完整填写 8 组可获得更稳定的拟合检验。");
+    const parameters = {
+      wavelengthNm: Number(wavelength),
+      refractiveIndex: Number(refractiveIndex),
+      orderInterval: Number(interval),
+      lengthFactor: correction.total,
+    };
+    const readings = ORDERS.filter((o) => values[o].trim() !== "").map((order) => ({
+      order,
+      diameter: Number(values[order]),
+    }));
+    const inputError = validateReportInput(readings, parameters);
+    if (inputError) {
+      setError(inputError);
       return;
     }
     if (!results.pairs.length || !Number.isFinite(results.radius)) {
@@ -509,6 +524,7 @@ export default function Home() {
         const rounds = [...session.rounds];
         rounds[rounds.length - 1] = {
           ...rounds.at(-1)!,
+          calculation: captureReport(parameters, results),
           restorationExecution: {
             selectedCauses: [...selectedCauses],
             lengthFactor: correction.total,
@@ -589,7 +605,10 @@ export default function Home() {
       ? selectedCauses.map((id) => CAUSES.find((cause) => cause.id === id)?.title).join("、")
       : "未选择待验证原因";
     return [
+      SOFTWARE_TITLE,
       "牛顿环实验数据还原报告",
+      `计算参数：λ=${wavelength} nm；n=${refractiveIndex}；Δm=${interval}；k=${correction.total.toFixed(6)}`,
+      RESULT_SCOPE,
       `图像判断：${diagnosis?.verdict || "—"}（辅助评分 ${Math.round((diagnosis?.confidence || 0) * 100)}%，非统计概率）`,
       `待验证原因（选中不代表确认）：${causeText}`,
       ...(metrics?.ellipse
@@ -608,7 +627,7 @@ export default function Home() {
           `算法执行：${s.algorithm} · ${s.status === "applied" ? "已应用" : s.status === "image" ? "图像阶段已处理" : "未执行数值补偿"}；${s.detail}`,
       ),
       ...physicalReport(),
-      ...aiSuggestions.map(
+      ...causeSuggestions.map(
         (c) => `原因排查：${c.title} · ${c.status}；${c.evidence} 验证方法：${c.advice}`,
       ),
       `数据一致性：${resultInsight.fitLevel}；组间离散对应的相对不确定度 ${fmt(resultInsight.uncertaintyRatio, 2)}%，不表示相对真值误差。`,
@@ -618,9 +637,13 @@ export default function Home() {
   }
 
   async function copyReport() {
-    await navigator.clipboard.writeText(reportText());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+    try {
+      await navigator.clipboard.writeText(reportText());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("当前浏览器无法复制摘要，请使用下载 CSV 或打印报告保留结果。");
+    }
   }
 
   function downloadCsv() {
@@ -634,6 +657,10 @@ export default function Home() {
         ),
       "",
       "图像选环,自动选择清晰暗环；绝对级次未知；不将图像环序套入读数级次",
+      `软件,${SOFTWARE_TITLE}`,
+      `光源波长(nm),${wavelength}`,
+      `介质折射率,${refractiveIndex}`,
+      `级次差,${interval}`,
       `综合修正系数,${correction.total.toFixed(6)}`,
       `还原曲率估计(m),${results.radius.toFixed(6)}`,
       `组间离散估算的不确定度(m),${results.radiusUncertainty.toFixed(6)}`,
@@ -780,7 +807,7 @@ export default function Home() {
         </section>
 
         <footer className="landing-footer">
-          <span>适用于高校牛顿环等厚干涉实验 · Public access</span>
+          <span>{SOFTWARE_TITLE}</span>
           <span>影像判断 · 数据复核 · 报告输出</span>
         </footer>
       </main>
@@ -1122,9 +1149,9 @@ export default function Home() {
             </div>
           </div>
 
-          {aiSuggestions.length > 0 && (
-            <div className="cause-section ai-advice-section">
-              <div className="cause-heading ai-advice-heading">
+          {causeSuggestions.length > 0 && (
+            <div className="cause-section cause-advice-section">
+              <div className="cause-heading cause-advice-heading">
                 <div>
                   <p>
                     <span>调</span> INSTRUMENT ADJUSTMENT
@@ -1136,8 +1163,8 @@ export default function Home() {
                 </div>
                 <span>全部常见原因 · 优先验证 3 项</span>
               </div>
-              <div className="cause-grid ai-advice-grid">
-                {aiSuggestions.map((cause, index) => (
+              <div className="cause-grid cause-advice-grid">
+                {causeSuggestions.map((cause, index) => (
                   <button
                     type="button"
                     key={cause.id}
@@ -1480,6 +1507,7 @@ export default function Home() {
             <div>
               <p className="eyebrow">RESTORATION COMPLETE</p>
               <h2>数据还原结果</h2>
+              <p>{SOFTWARE_TITLE}</p>
               <span>
                 {diagnosis?.verdict} ·{" "}
                 {selectedCauses.length ? `${selectedCauses.length} 项原因待验证` : "未启用额外修正"}
@@ -1498,6 +1526,11 @@ export default function Home() {
             </div>
           </div>
 
+          {error && (
+            <p className="error-message" role="alert">
+              {error}
+            </p>
+          )}
           <div className="result-cards">
             <article className="main-result">
               <span>还原曲率估计 · 逐差法</span>
@@ -1670,6 +1703,8 @@ export default function Home() {
           </div>
 
           <p className="report-footnote">
+            V{SOFTWARE_VERSION} · λ={wavelength} nm · n={refractiveIndex} · Δm={interval} · k=
+            {correction.total.toFixed(6)}。
             曲率半径来自输入直径与已知级差。图像只提供形状证据；尺度、波长和模型偏差仍需独立评估。请结合原始记录使用结果。
           </p>
           <div className="restart-bar">

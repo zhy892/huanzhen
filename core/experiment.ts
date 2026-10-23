@@ -33,6 +33,7 @@ export type Sample = {
   name: string;
 };
 export type Round = {
+  calculation?: import("./report-snapshot.ts").ReportSnapshot;
   restorationExecution?: {
     selectedCauses: string[];
     lengthFactor: number;

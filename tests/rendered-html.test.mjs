@@ -31,7 +31,7 @@ test("server-renders the huanzhen Newton rings homepage", async () => {
 
   const html = await response.text();
   assert.doesNotMatch(html, developmentPreviewMeta);
-  assert.match(html, /<title>环真｜牛顿环数据还原工具<\/title>/i);
+  assert.match(html, /<title>环真牛顿环实验数据分析与还原软件 V1\.0\.0<\/title>/i);
   assert.match(html, /从环纹出发/);
   assert.match(html, /还原实验数据/);
   assert.match(html, /开始分析/);
@@ -58,8 +58,8 @@ test("ships diagnosis, retest, and report interpretation", async () => {
   );
   assert.match(page, /不从照片代替仪器读数/);
   assert.match(page, /器材真实半径未知/);
-  assert.match(css, /\.ai-advice-heading h3/);
-  assert.match(layout, /环真｜牛顿环数据还原工具/);
+  assert.match(css, /\.cause-advice-heading h3/);
+  assert.match(layout, /title: SOFTWARE_TITLE/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(page, /SkeletonPreview/);
 });

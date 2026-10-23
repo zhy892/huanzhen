@@ -1,6 +1,6 @@
 {
   "name": "huanzhen-newton-rings",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -11,7 +11,8 @@
     "start": "vinext start",
     "test": "npm run build && node --experimental-strip-types --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "source:manifest": "node scripts/source-manifest.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

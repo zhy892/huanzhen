@@ -37,6 +37,7 @@ yarn-error.log*
 /dist/
 /.wrangler/
 /outputs/
+/artifacts/
 /work/
 
 # TypeScript incremental build cache

@@ -45,7 +45,7 @@ export type ImageMetrics = {
   ringSelection?: RingSelection;
 };
 
-export type AiDiagnosis = {
+export type Diagnosis = {
   verdict: string;
   summary: string;
   causes: CauseId[];
@@ -168,7 +168,7 @@ export function fmt(value: number, digits = 3) {
   return Number.isFinite(value) ? value.toFixed(digits) : "—";
 }
 
-export function builtinDiagnosis(metrics: ImageMetrics): AiDiagnosis {
+export function builtinDiagnosis(metrics: ImageMetrics): Diagnosis {
   if (metrics.damaged) {
     return {
       verdict: metrics.fitStatus === "review" ? "拟合待复核" : "轮廓证据不足",
@@ -204,7 +204,7 @@ export function builtinDiagnosis(metrics: ImageMetrics): AiDiagnosis {
   };
 }
 
-export function constrainDiagnosis(metrics: ImageMetrics, diagnosis: AiDiagnosis): AiDiagnosis {
+export function constrainDiagnosis(metrics: ImageMetrics, diagnosis: Diagnosis): Diagnosis {
   const local = builtinDiagnosis(metrics);
   if (metrics.damaged || metrics.ringSelection?.consistency === "inconsistent") return local;
   const scope = "仅评估可见暗环形状；中心接触状态和真实读数偏心未评估，不据此补偿直径。";
@@ -217,7 +217,7 @@ export function constrainDiagnosis(metrics: ImageMetrics, diagnosis: AiDiagnosis
   };
 }
 
-export function buildAiSuggestions(metrics: ImageMetrics, _diagnosis: AiDiagnosis) {
+export function buildCauseSuggestions(metrics: ImageMetrics, _diagnosis: Diagnosis) {
   // Scores order checks, not calibrated causal probabilities. Every cause stays visible.
   const weak = metrics.damaged || metrics.fitStatus === "review",
     ellipse = metrics.ratio < 0.99;

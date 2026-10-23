@@ -21,3 +21,4 @@ jobs:
       - run: npm test
       - run: npx wrangler types .wrangler/runtime.d.ts --config dist/server/wrangler.json --include-env false
       - run: npx tsc --noEmit
+      - run: npm run source:manifest

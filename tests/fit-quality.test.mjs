@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assessFit } from "../core/fit-quality.ts";
-import { builtinDiagnosis, buildAiSuggestions } from "../core/analysis.ts";
+import { builtinDiagnosis, buildCauseSuggestions } from "../core/analysis.ts";
 const input = {
   rms: 0.4,
   semiMinor: 120,
@@ -46,7 +46,7 @@ test("poor image evidence is not diagnosed as physical instrument damage", () =>
   const diagnosis = builtinDiagnosis(metrics);
   assert.equal(diagnosis.verdict, "拟合待复核");
   assert.deepEqual(diagnosis.causes, []);
-  const suggestions = buildAiSuggestions(metrics, diagnosis);
+  const suggestions = buildCauseSuggestions(metrics, diagnosis);
   assert.ok(suggestions.find((c) => c.id === "focus").recommended);
   assert.equal(suggestions.find((c) => c.id === "damage").recommended, false);
   assert.equal(suggestions.find((c) => c.id === "damage").status, "无法凭本图确认");

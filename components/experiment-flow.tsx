@@ -413,9 +413,13 @@ export default function ExperimentFlow({
                   {r.readings.length > 0 && (
                     <p>
                       {(() => {
+                        if (r.calculation) {
+                          const { parameters: p, results: result, software } = r.calculation;
+                          return `当轮报告快照 V${software.version}：逐差法 R=${result.radius.toFixed(6)} m；全数据回归 R=${result.regressionRadius.toFixed(6)} m；λ=${p.wavelengthNm} nm，n=${p.refractiveIndex}，Δm=${p.orderInterval}，k=${p.lengthFactor}。历史结果保留当轮参数。`;
+                        }
                         const result = calculate(r.readings, session.profile);
                         return result
-                          ? `原始读数回归 R=${result.radius.toFixed(6)} m，U=${result.expanded.toFixed(6)} m（k=2，未包含全部系统不确定度）`
+                          ? `旧记录未保存当轮计算参数；按当前档案波长、空气折射率及未标定直径重算：R=${result.radius.toFixed(6)} m，U=${result.expanded.toFixed(6)} m（k=2，未包含全部系统不确定度），不能作为原报告复现值。`
                           : null;
                       })()}
                     </p>
