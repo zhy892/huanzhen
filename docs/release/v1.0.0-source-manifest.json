@@ -1,0 +1,155 @@
+{
+  "version": "1.0.0",
+  "files": [
+    {
+      "path": "app/experiment/experiment.css",
+      "lines": 149,
+      "sha256": "6e27b5f803661b5363999630fd29426f9ea7dd10e0b2316dcc491263832f1b4d"
+    },
+    {
+      "path": "app/experiment/page.tsx",
+      "lines": 4,
+      "sha256": "4260a26c61535df694839910fd923daf3593cd4c7db867491331e13e27a56175"
+    },
+    {
+      "path": "app/globals.css",
+      "lines": 3425,
+      "sha256": "3ad9dfadba497baa468cf01020b1a4733dd5ffe5b48f28695c33bcc78e12acdd"
+    },
+    {
+      "path": "app/layout.tsx",
+      "lines": 39,
+      "sha256": "5a739ed79dc47d6d79bc68c5609d784b918dbbd74b72fcc031a450d4d8f2bd75"
+    },
+    {
+      "path": "app/page.tsx",
+      "lines": 1746,
+      "sha256": "0605d83d43409b665d6115d24a490f24e671e75af90807968a7545b469673b96"
+    },
+    {
+      "path": "components/experiment-flow.tsx",
+      "lines": 440,
+      "sha256": "8acb8a93fb4922b549c54044b319592e59a7e56129ab984c7d1a50bd0d35c99a"
+    },
+    {
+      "path": "components/force-calibration.tsx",
+      "lines": 215,
+      "sha256": "4bc97338a5dc2a48e5c4f15dc3a99de286310ccef671997d476d117da056af50"
+    },
+    {
+      "path": "components/physical-regression.tsx",
+      "lines": 82,
+      "sha256": "18d7a82fc6da42fdfdd8f4b4283fdf6e85b9dde11615c4ecb5f428e74231720c"
+    },
+    {
+      "path": "components/round-trend.tsx",
+      "lines": 64,
+      "sha256": "4d84b623a15e9b7022180756b9d5c7715d977becc2c5a90f87e61efb6d2e8fde"
+    },
+    {
+      "path": "core/analysis.ts",
+      "lines": 901,
+      "sha256": "b2d98551b5ba01360b99cec6cfe6b995bf3be83d0e8ee6515e7bb2c768e51c68"
+    },
+    {
+      "path": "core/auto-rings.ts",
+      "lines": 240,
+      "sha256": "da87da25ecfb613da70ae7827c7ca57ed3ac22ed4703f33d63c83799e8463100"
+    },
+    {
+      "path": "core/ellipse.ts",
+      "lines": 285,
+      "sha256": "89a2212ea68161484c9e855ea6bad2ea8b8190e744b57166d05de76afee175a3"
+    },
+    {
+      "path": "core/experiment.ts",
+      "lines": 422,
+      "sha256": "af1c854a6e17eec4a482d39545bda6f1116b4e4045a35c55e549f8a9ddf84ee4"
+    },
+    {
+      "path": "core/fit-quality.ts",
+      "lines": 56,
+      "sha256": "fdc7d6a37b6f7d1b7567464dfa1671bc49e32ebaa836f614f87c44e58a0b6a31"
+    },
+    {
+      "path": "core/force-calibration.ts",
+      "lines": 119,
+      "sha256": "8a89a1593c1050f7158df774b03cbaceecd1e60727e8af93f003681b7ca30627"
+    },
+    {
+      "path": "core/photometric-ring.ts",
+      "lines": 125,
+      "sha256": "8cbf2b674cade2d4fe92fa5ede5f705121cd692d28291c8ad71ef71df22e7699"
+    },
+    {
+      "path": "core/physical-regression.ts",
+      "lines": 81,
+      "sha256": "b34138684699426f809a539884a3c8c278e2b14207c4eaae402ccb75c3c46f29"
+    },
+    {
+      "path": "core/recording.ts",
+      "lines": 25,
+      "sha256": "ea55968f1d4fdaa7dca805a96eaa9581e2dc6b59ff2c7412056c25756cb12ba3"
+    },
+    {
+      "path": "core/report-snapshot.ts",
+      "lines": 59,
+      "sha256": "23c022e88d46c69f3a2ff3aebcd55a9ca52fde9a3bb406d13e5d27a047e3617b"
+    },
+    {
+      "path": "core/restoration-plan.ts",
+      "lines": 59,
+      "sha256": "e2c0487161d2c895877d418a254eb929263af769bd1d5495bd91c1b93710ccd9"
+    },
+    {
+      "path": "core/ring-evidence.ts",
+      "lines": 92,
+      "sha256": "8a13fab6978ef7c516cf7e8694baf57aca1f2fe4048d7410885fecf7a8436b07"
+    },
+    {
+      "path": "core/ring-preprocessing.ts",
+      "lines": 62,
+      "sha256": "e26e8585f341bc86c2cfee92657401929c777abe1963e5d4dee9b53028c38635"
+    },
+    {
+      "path": "core/ring-refinement.ts",
+      "lines": 68,
+      "sha256": "519cc10168e1dbdad70991d3948643b880b8c9bad212fda6260448be797529f3"
+    },
+    {
+      "path": "core/ring-tracking.ts",
+      "lines": 545,
+      "sha256": "ef588cc35434a4e5698848c6a79ad916dbe7ffecb941954ccdd43f60f161b13e"
+    },
+    {
+      "path": "core/software.ts",
+      "lines": 5,
+      "sha256": "5e54a06763a6a4cac394632ed49553812e880d758cf306f0c825c881e55dcb12"
+    },
+    {
+      "path": "core/subpixel-ring.ts",
+      "lines": 134,
+      "sha256": "cdc803fe96facec35e0aeb577f0b08a24ddde5d3ce71559d39e5b1f73cc5b3b0"
+    },
+    {
+      "path": "lib/experiment-store.ts",
+      "lines": 108,
+      "sha256": "c6a1595b029544ec87c6cb2d44ae1803c0b7ccf4b9801ff2a3f575dc757120dc"
+    },
+    {
+      "path": "worker/index.ts",
+      "lines": 51,
+      "sha256": "01f2432222850c5b0cb1acccf0dcf6d2c12dfdfc68c0148995dd8b513cc66b13"
+    },
+    {
+      "path": "db/index.ts",
+      "lines": 14,
+      "sha256": "6ebb5dad23eea57d318c05806d9ad97148989333f3bf7154423ef7187b3fe90d"
+    },
+    {
+      "path": "db/schema.ts",
+      "lines": 4,
+      "sha256": "13ddacbf0be50e054d450a6c642b7fdc1aa943fd6b99084711e07e58b600390d"
+    }
+  ]
+}
